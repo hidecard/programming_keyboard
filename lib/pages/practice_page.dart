@@ -3,7 +3,6 @@ import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/github.dart';
 import '../models/statistics.dart';
 import '../models/achievement.dart';
-import 'dart:async';
 import 'package:flutter/services.dart';
 
 class PracticePage extends StatefulWidget {
@@ -23,9 +22,6 @@ class _PracticePageState extends State<PracticePage> {
   // State variables
   String? _currentKey;
   bool _showHomeRow = true;
-  int _countdown = 0;
-  Timer? _countdownTimer;
-
   bool _isStarted = false;
   bool _isCompleted = false;
   int _startTime = 0;
@@ -214,7 +210,6 @@ document.addEventListener('DOMContentLoaded', function() {
   @override
   void dispose() {
     RawKeyboard.instance.removeListener(_onRawKey);
-    _countdownTimer?.cancel();
     _typingController.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -543,7 +538,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  // Map logical keys to characters or key identifiers
+  // Map logical keys to characters, including additional symbols
   String? _mapLogicalKeyToChar(LogicalKeyboardKey key) {
     final keyLabel = key.keyLabel?.toLowerCase() ?? '';
     const symbolMap = {
@@ -558,8 +553,6 @@ document.addEventListener('DOMContentLoaded', function() {
       'backquote': '`',
       'open bracket': '[',
       'close bracket': ']',
-      'open brace': '{',
-      'close brace': '}',
       'less than': '<',
       'greater than': '>',
       'vertical line': '|',
@@ -581,47 +574,103 @@ document.addEventListener('DOMContentLoaded', function() {
     return symbolMap[keyLabel] ?? keyLabel;
   }
 
-  // Countdown logic
-  void _startCountdown(int seconds) {
-    setState(() {
-      _countdown = seconds;
-    });
-    _countdownTimer?.cancel();
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) return;
-      setState(() {
-        if (_countdown > 0) {
-          _countdown--;
-        } else {
-          timer.cancel();
-          _startPractice();
-        }
-      });
-    });
-  }
-
   // Virtual Keyboard Widget
   Widget _buildVirtualKeyboard() {
-    // Define keyboard rows with symbols matching their input characters
+    // Define keyboard rows including numbers, symbols, shift, and tab
     final rows = [
       // Number row
-      ['tab', '`', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '|'],
+      [
+        'tab',
+        '`',
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+        '7',
+        '8',
+        '9',
+        '0',
+        '-',
+        '=',
+        '|',
+      ],
       // Top row
-      ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '{', '}', '\\'],
+      ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\\'],
       // Home row
-      ['shift', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '<', '>'],
+      [
+        'shift',
+        'a',
+        's',
+        'd',
+        'f',
+        'g',
+        'h',
+        'j',
+        'k',
+        'l',
+        ';',
+        '\'',
+        '<',
+        '>',
+      ],
       // Bottom row
       ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/'],
       // Space bar
       ['space'],
     ];
 
-    // Determine the next keys to highlight (including Shift for uppercase or shifted symbols)
+    // Determine the next keys to highlight (including Shift for uppercase and symbols)
     List<String> nextKeys = [];
     if (_currentPosition < _targetCode.length) {
       final nextChar = _targetCode[_currentPosition];
-      final mappedKeys = _mapCharToKeyboardKey(nextChar);
-      nextKeys.addAll(mappedKeys);
+      final mappedKey = _mapCharToKeyboardKey(nextChar);
+      nextKeys.add(mappedKey);
+      // If the next character is uppercase or a Shift-modified symbol, also highlight Shift
+      if ((nextChar.toUpperCase() != nextChar.toLowerCase() &&
+              nextChar == nextChar.toUpperCase()) ||
+          const [
+            '!',
+            '<',
+            '>',
+            '.',
+            '/',
+            '.',
+            ',',
+            ';',
+            ':',
+            '\'',
+            '[',
+            ']',
+            '\'',
+            '=',
+            '-',
+            '0',
+            '1',
+            '2',
+            '3',
+            '4',
+            '5',
+            '6',
+            '7',
+            '8',
+            '9',
+            '(',
+            ')',
+            '_',
+            '+',
+            ':',
+            '"',
+            '{',
+            '}',
+            '?',
+            '!',
+            '@',
+            '#'
+          ].contains(nextChar)) {
+        nextKeys.add('shift');
+      }
     }
 
     return Container(
@@ -649,32 +698,37 @@ document.addEventListener('DOMContentLoaded', function() {
                 duration: const Duration(milliseconds: 120),
                 margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
                 padding: EdgeInsets.symmetric(
-                  horizontal: isSpace ? 40 : (isShift || isTab) ? 20 : 12,
+                  horizontal: isSpace
+                      ? 40
+                      : (isShift || isTab)
+                      ? 20
+                      : 12,
                   vertical: isSpace ? 8 : 10,
                 ),
                 decoration: BoxDecoration(
                   color: isActive
                       ? Colors.orange
                       : isNext
-                          ? Colors.blue[100]
-                          : isHome && _showHomeRow
-                              ? Colors.orange[100]
-                              : Colors.white,
+                      ? Colors.blue[100]
+                      : isHome && _showHomeRow
+                      ? Colors.orange[100]
+                      : Colors.white,
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
                     color: isActive
                         ? Colors.orange[700]!
                         : isNext
-                            ? Colors.blue[700]!
-                            : isHome && _showHomeRow
-                                ? Colors.orange
-                                : Colors.grey[300]!,
+                        ? Colors.blue[700]!
+                        : isHome && _showHomeRow
+                        ? Colors.orange
+                        : Colors.grey[300]!,
                     width: isActive || isNext ? 2 : 1,
                   ),
                   boxShadow: isActive || isNext
                       ? [
                           BoxShadow(
-                            color: (isActive ? Colors.orange : Colors.blue).withOpacity(0.18),
+                            color: (isActive ? Colors.orange : Colors.blue)
+                                .withOpacity(0.18),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
@@ -682,17 +736,27 @@ document.addEventListener('DOMContentLoaded', function() {
                       : [],
                 ),
                 child: Text(
-                  isSpace ? 'Space' : (isShift ? 'Shift' : (isTab ? 'Tab' : key)),
+                  isSpace
+                      ? 'Space'
+                      : (isShift
+                            ? 'Shift'
+                            : (isTab ? 'Tab' : key.toUpperCase())),
                   style: TextStyle(
                     color: isActive
                         ? Colors.white
                         : isNext
-                            ? Colors.blue[800]
-                            : isHome && _showHomeRow
-                                ? Colors.orange[800]
-                                : Colors.grey[800],
-                    fontWeight: isActive || isNext ? FontWeight.bold : FontWeight.normal,
-                    fontSize: isSpace ? 16 : (isShift || isTab) ? 14 : 18,
+                        ? Colors.blue[800]
+                        : isHome && _showHomeRow
+                        ? Colors.orange[800]
+                        : Colors.grey[800],
+                    fontWeight: isActive || isNext
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                    fontSize: isSpace
+                        ? 16
+                        : (isShift || isTab)
+                        ? 14
+                        : 18,
                   ),
                 ),
               );
@@ -703,105 +767,48 @@ document.addEventListener('DOMContentLoaded', function() {
     );
   }
 
-  // Map target character to keyboard key(s), handling Shift for uppercase and shifted symbols
-  List<String> _mapCharToKeyboardKey(String char) {
+  // Map target character to keyboard key
+  String _mapCharToKeyboardKey(String char) {
     const charToKeyMap = {
-      ' ': ['space'],
-      ';': ['semicolon'],
-      '=': ['equal'],
-      ',': ['comma'],
-      '-': ['minus'],
-      '.': ['period'],
-      '/': ['slash'],
-      '\\': ['backslash'],
-      '\'': ['quote'],
-      '`': ['backquote'],
-      '[': ['open bracket'],
-      ']': ['close bracket'],
-      '{': ['open bracket', 'shift'], // Shift + [
-      '}': ['close bracket', 'shift'], // Shift + ]
-      '<': ['less than'],
-      '>': ['greater than'],
-      '|': ['vertical line'],
-      '\t': ['tab'],
-      '!': ['1', 'shift'],
-      '@': ['2', 'shift'],
-      '#': ['3', 'shift'],
-      '%': ['5', 'shift'],
-      '^': ['6', 'shift'],
-      '&': ['7', 'shift'],
-      '*': ['8', 'shift'],
-      '(': ['9', 'shift'],
-      ')': ['0', 'shift'],
-      '_': ['minus', 'shift'],
-      '+': ['equal', 'shift'],
-      ':': ['semicolon', 'shift'],
-      '"': ['quote', 'shift'],
-      '~': ['backquote', 'shift'],
-      '?': ['slash', 'shift'],
+      ' ': 'space',
+      ';': 'semicolon',
+      '=': 'equal',
+      ',': 'comma',
+      '-': 'minus',
+      '.': 'period',
+      '/': 'slash',
+      '\\': 'backslash',
+      '\'': 'quote',
+      '`': 'backquote',
+      '[': 'open bracket',
+      ']': 'close bracket',
+      '<': 'less than',
+      '>': 'greater than',
+      '|': 'vertical line',
+      '\t': 'tab',
+      '!': '1', // Shift + 1
+      '@': '2', // Shift + 2
+      '#': '3', // Shift + 3
+      '%': '5', // Shift + 5
+      '^': '6', // Shift + 6
+      '&': '7', // Shift + 7
+      '*': '8', // Shift + 8
+      '(': '9', // Shift + 9
+      ')': '0', // Shift + 0
+      '_': 'minus', // Shift + -
+      '+': 'equal', // Shift + =
+      ':': 'semicolon', // Shift + ;
+      '"': 'quote', // Shift + '
+      '{': 'open bracket', // Shift + [
+      '}': 'close bracket', // Shift + ]
+      '?': 'slash', // Shift + /
     };
-
-    // Handle uppercase letters
-    if (char.toUpperCase() != char.toLowerCase() && char == char.toUpperCase()) {
-      return [char.toLowerCase(), 'shift'];
+    // For uppercase letters, return the lowercase key
+    if (char.toUpperCase() != char.toLowerCase() &&
+        char == char.toUpperCase()) {
+      return char.toLowerCase();
     }
-
-    // Return mapped keys or the lowercase character as a single-item list
-    return charToKeyMap[char] ?? [char.toLowerCase()];
-  }
-
-  // Enhanced Countdown UI
-  Widget _buildCountdown() {
-    if (_countdown > 0) {
-      return Container(
-        margin: const EdgeInsets.only(top: 16),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            AnimatedScale(
-              scale: _countdown > 0 ? 1.0 + (_countdown % 2) * 0.1 : 1.0,
-              duration: const Duration(milliseconds: 500),
-              child: Container(
-                width: 100,
-                height: 100,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.orange[100],
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.orange.withOpacity(0.3),
-                      blurRadius: 10,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: Text(
-                    '$_countdown',
-                    style: TextStyle(
-                      color: Colors.orange[800],
-                      fontWeight: FontWeight.bold,
-                      fontSize: 48,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 120,
-              height: 120,
-              child: CircularProgressIndicator(
-                value: _countdown / 3,
-                strokeWidth: 6,
-                backgroundColor: Colors.grey[200],
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.orange[700]!),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    return const SizedBox.shrink();
+    return charToKeyMap[char] ?? char.toLowerCase();
   }
 
   void _startPractice() {
@@ -948,9 +955,6 @@ document.addEventListener('DOMContentLoaded', function() {
               ],
             ),
           ),
-
-          // Countdown
-          _buildCountdown(),
 
           // Main Content
           Expanded(
@@ -1129,11 +1133,9 @@ document.addEventListener('DOMContentLoaded', function() {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          _startCountdown(3); // 3 seconds countdown
-        },
-        icon: const Icon(Icons.timer),
-        label: const Text('Start Countdown'),
+        onPressed: _startPractice,
+        icon: const Icon(Icons.play_arrow),
+        label: const Text('Start Practice'),
         backgroundColor: Colors.orange,
         foregroundColor: Colors.white,
       ),

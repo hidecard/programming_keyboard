@@ -4,7 +4,61 @@
       "id": 1,
       "title": "Basic Structure",
       "description": "Learn the basic HTML structure.",
-      "typingText": "<!DOCTYPE html>\n<html>...</html>"
+      "typingText": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <title>My Page</title>\n</head>\n<body>\n</body>\n</html>"
+    },
+    {
+      "id": 2,
+      "title": "Headings and Paragraphs",
+      "description": "Practice HTML headings and paragraphs.",
+      "typingText": "<h1>Main Heading</h1>\n<h2>Subheading</h2>\n<p>This is a paragraph.</p>"
+    },
+    {
+      "id": 3,
+      "title": "Links and Images",
+      "description": "Type HTML anchor and image tags.",
+      "typingText": "<a href=\"https://example.com\">Visit Example</a>\n<img src=\"image.jpg\" alt=\"Sample Image\">"
+    },
+    {
+      "id": 4,
+      "title": "Lists",
+      "description": "Create ordered and unordered lists.",
+      "typingText": "<ul>\n    <li>Item 1</li>\n    <li>Item 2</li>\n</ul>\n<ol>\n    <li>First</li>\n    <li>Second</li>\n</ol>"
+    },
+    {
+      "id": 5,
+      "title": "Forms",
+      "description": "Build a simple HTML form.",
+      "typingText": "<form action=\"/submit\" method=\"POST\">\n    <input type=\"text\" name=\"username\">\n    <button type=\"submit\">Submit</button>\n</form>"
+    },
+    {
+      "id": 6,
+      "title": "Tables",
+      "description": "Practice creating HTML tables.",
+      "typingText": "<table>\n    <tr>\n        <th>Header 1</th>\n        <th>Header 2</th>\n    </tr>\n    <tr>\n        <td>Data 1</td>\n        <td>Data 2</td>\n    </tr>\n</table>"
+    },
+    {
+      "id": 7,
+      "title": "Semantic Elements",
+      "description": "Use semantic HTML elements.",
+      "typingText": "<header>\n    <nav>\n        <a href=\"#home\">Home</a>\n    </nav>\n</header>\n<main>\n    <article>\n        <p>Content here.</p>\n    </article>\n</main>"
+    },
+    {
+      "id": 8,
+      "title": "Div and Span",
+      "description": "Practice div and span elements.",
+      "typingText": "<div class=\"container\">\n    <span class=\"highlight\">Text</span>\n</div>"
+    },
+    {
+      "id": 9,
+      "title": "Meta Tags",
+      "description": "Add meta tags for SEO and responsiveness.",
+      "typingText": "<meta name=\"description\" content=\"My website description\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+    },
+    {
+      "id": 10,
+      "title": "HTML Comments",
+      "description": "Practice writing HTML comments.",
+      "typingText": "<!-- This is a comment -->\n<p>Visible content</p>\n<!-- End of section -->"
     }
   ],
   "CSS": [
@@ -12,7 +66,61 @@
       "id": 1,
       "title": "Styling Basics",
       "description": "Type basic CSS selectors and properties.",
-      "typingText": "body { ... }"
+      "typingText": "body {\n    font-family: Arial, sans-serif;\n    color: #333;\n}"
+    },
+    {
+      "id": 2,
+      "title": "Box Model",
+      "description": "Practice CSS box model properties.",
+      "typingText": ".box {\n    margin: 10px;\n    padding: 20px;\n    border: 1px solid black;\n}"
+    },
+    {
+      "id": 3,
+      "title": "Flexbox Layout",
+      "description": "Create a flexbox layout.",
+      "typingText": ".container {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n}"
+    },
+    {
+      "id": 4,
+      "title": "CSS Selectors",
+      "description": "Use class, ID, and element selectors.",
+      "typingText": "#header {\n    background: blue;\n}\n.card {\n    border-radius: 5px;\n}\np {\n    font-size: 16px;\n}"
+    },
+    {
+      "id": 5,
+      "title": "Pseudo-Classes",
+      "description": "Practice hover and focus pseudo-classes.",
+      "typingText": "a:hover {\n    color: red;\n}\ninput:focus {\n    border-color: blue;\n}"
+    },
+    {
+      "id": 6,
+      "title": "CSS Grid",
+      "description": "Create a grid layout.",
+      "typingText": ".grid {\n    display: grid;\n    grid-template-columns: 1fr 1fr;\n    gap: 20px;\n}"
+    },
+    {
+      "id": 7,
+      "title": "Transitions",
+      "description": "Add CSS transitions for animations.",
+      "typingText": ".button {\n    transition: background-color 0.3s ease;\n}\n.button:hover {\n    background-color: green;\n}"
+    },
+    {
+      "id": 8,
+      "title": "Media Queries",
+      "description": "Practice responsive design with media queries.",
+      "typingText": "@media (max-width: 600px) {\n    .container {\n        flex-direction: column;\n    }\n}"
+    },
+    {
+      "id": 9,
+      "title": "CSS Variables",
+      "description": "Use CSS custom properties.",
+      "typingText": ":root {\n    --primary-color: #007bff;\n}\n.button {\n    background: var(--primary-color);\n}"
+    },
+    {
+      "id": 10,
+      "title": "Text Styling",
+      "description": "Style text with CSS properties.",
+      "typingText": "h1 {\n    text-align: center;\n    text-transform: uppercase;\n    letter-spacing: 2px;\n}"
     }
   ],
   "JavaScript": [
@@ -20,7 +128,61 @@
       "id": 1,
       "title": "Variables & Data Types",
       "description": "Type JS variable declarations.",
-      "typingText": "let name = \"Alice\";"
+      "typingText": "let name = \"Alice\";\nconst age = 25;\nlet isActive = true;"
+    },
+    {
+      "id": 2,
+      "title": "Functions",
+      "description": "Practice function declarations.",
+      "typingText": "function greet(name) {\n    return `Hello, ${name}!`;\n}\nconsole.log(greet(\"Bob\"));"
+    },
+    {
+      "id": 3,
+      "title": "Arrays",
+      "description": "Work with JavaScript arrays.",
+      "typingText": "let fruits = [\"apple\", \"banana\", \"orange\"];\nfruits.push(\"grape\");"
+    },
+    {
+      "id": 4,
+      "title": "Loops",
+      "description": "Practice for loops in JavaScript.",
+      "typingText": "for (let i = 0; i < 5; i++) {\n    console.log(i);\n}"
+    },
+    {
+      "id": 5,
+      "title": "Conditionals",
+      "description": "Use if-else statements.",
+      "typingText": "if (score > 80) {\n    console.log(\"Pass\");\n} else {\n    console.log(\"Fail\");\n}"
+    },
+    {
+      "id": 6,
+      "title": "DOM Manipulation",
+      "description": "Manipulate the DOM with JavaScript.",
+      "typingText": "const button = document.querySelector(\"#btn\");\nbutton.addEventListener(\"click\", () => alert(\"Clicked!\"));"
+    },
+    {
+      "id": 7,
+      "title": "Arrow Functions",
+      "description": "Practice arrow function syntax.",
+      "typingText": "const add = (a, b) => a + b;\nconsole.log(add(5, 3));"
+    },
+    {
+      "id": 8,
+      "title": "Objects",
+      "description": "Create and use JavaScript objects.",
+      "typingText": "const user = {\n    name: \"John\",\n    age: 30\n};\nconsole.log(user.name);"
+    },
+    {
+      "id": 9,
+      "title": "Promises",
+      "description": "Practice JavaScript promises.",
+      "typingText": "const promise = new Promise((resolve, reject) => {\n    setTimeout(() => resolve(\"Done!\"), 1000);\n});"
+    },
+    {
+      "id": 10,
+      "title": "Template Literals",
+      "description": "Use template literals for strings.",
+      "typingText": "const name = \"Alice\";\nconst message = `Welcome, ${name}!`;\nconsole.log(message);"
     }
   ]
 }

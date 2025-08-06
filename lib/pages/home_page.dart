@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import '../utils/lesson_storage.dart';
-import 'dart:ui';
-import 'dart:convert';
-import 'dart:io' as io;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
 import 'package:universal_html/html.dart' as html;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:convert';
+import 'dart:io' as io;
+import 'dart:ui';
+import '../utils/lesson_storage.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -14,13 +14,12 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage>
-    with SingleTickerProviderStateMixin {
+class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
   Map<String, List<Map<String, dynamic>>> _lessonMap = {};
   String _selectedLanguage = 'HTML';
   int _selectedLessonId = 1;
   bool _loading = true;
-  late TabController _tabController;
+  TabController? _tabController;
 
   @override
   void initState() {
@@ -34,19 +33,26 @@ class _HomePageState extends State<HomePage>
       _lessonMap = loaded.map(
         (k, v) => MapEntry(k, List<Map<String, dynamic>>.from(v)),
       );
+      _tabController?.dispose(); // Dispose any existing controller
       _tabController = TabController(
-        length: _lessonMap.keys.length,
+        length: _lessonMap.keys.length > 0 ? _lessonMap.keys.length : 1,
         vsync: this,
-        initialIndex: _lessonMap.keys.toList().indexOf(_selectedLanguage),
+        initialIndex: _lessonMap.keys.isNotEmpty
+            ? _lessonMap.keys.toList().indexOf(_selectedLanguage) >= 0
+                ? _lessonMap.keys.toList().indexOf(_selectedLanguage)
+                : 0
+            : 0,
       );
-      _tabController.addListener(() {
-        if (_tabController.indexIsChanging) return;
-        setState(() {
-          _selectedLanguage = _lessonMap.keys.toList()[_tabController.index];
-          _selectedLessonId = 1;
-        });
-      });
+      _tabController!.addListener(_handleTabChange);
       _loading = false;
+    });
+  }
+
+  void _handleTabChange() {
+    if (_tabController!.indexIsChanging || !mounted) return;
+    setState(() {
+      _selectedLanguage = _lessonMap.keys.toList()[_tabController!.index];
+      _selectedLessonId = 1;
     });
   }
 
@@ -55,17 +61,18 @@ class _HomePageState extends State<HomePage>
   }
 
   void _startPractice() {
+    if (_lessonMap[_selectedLanguage]!.isEmpty) return;
     final lesson = _lessonMap[_selectedLanguage]!.firstWhere(
       (l) => l['id'] == _selectedLessonId,
+      orElse: () => _lessonMap[_selectedLanguage]!.first,
     );
     Navigator.pushNamed(
       context,
       '/practice',
       arguments: {
         'language': _selectedLanguage,
-        'lesson': _selectedLessonId,
+        'lesson': lesson['id'],
         'typingText': lesson['typingText'] ?? '',
-        'title': lesson['title'] ?? '',
       },
     );
   }
@@ -108,14 +115,9 @@ class _HomePageState extends State<HomePage>
                       ),
                     ),
                     items: _lessonMap.keys
-                        .map(
-                          (cat) =>
-                              DropdownMenuItem(value: cat, child: Text(cat)),
-                        )
+                        .map((cat) => DropdownMenuItem(value: cat, child: Text(cat)))
                         .toList(),
-                    onChanged: (v) {
-                      if (v != null) selectedCategory = v;
-                    },
+                    onChanged: (v) => selectedCategory = v ?? selectedCategory,
                   ),
                   const SizedBox(height: 14),
                   TextField(
@@ -165,10 +167,7 @@ class _HomePageState extends State<HomePage>
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 12,
-                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                         ),
                         onPressed: () {
                           if (title.isNotEmpty && typingText.isNotEmpty) {
@@ -191,10 +190,7 @@ class _HomePageState extends State<HomePage>
         );
       },
     );
-    if (result != null &&
-        result['title'] != null &&
-        result['typingText'] != null &&
-        result['category'] != null) {
+    if (result != null && result['title'] != null && result['typingText'] != null) {
       setState(() {
         final lessons = _lessonMap[result['category']]!;
         lessons.add({
@@ -205,9 +201,7 @@ class _HomePageState extends State<HomePage>
         });
         _selectedLanguage = result['category']!;
         _selectedLessonId = lessons.length;
-        _tabController.index = _lessonMap.keys.toList().indexOf(
-          _selectedLanguage,
-        );
+        _updateTabController();
       });
       await _saveLessons();
     }
@@ -264,14 +258,10 @@ class _HomePageState extends State<HomePage>
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 12,
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                       ),
                       onPressed: () {
-                        if (category.trim().isNotEmpty &&
-                            !_lessonMap.containsKey(category.trim())) {
+                        if (category.trim().isNotEmpty && !_lessonMap.containsKey(category.trim())) {
                           Navigator.pop(context, category.trim());
                         }
                       },
@@ -290,22 +280,25 @@ class _HomePageState extends State<HomePage>
         _lessonMap[result] = [];
         _selectedLanguage = result;
         _selectedLessonId = 1;
-        _tabController.dispose(); // dispose old controller
-        _tabController = TabController(
-          length: _lessonMap.keys.length,
-          vsync: this,
-          initialIndex: _lessonMap.keys.toList().indexOf(_selectedLanguage),
-        );
-        _tabController.addListener(() {
-          if (_tabController.indexIsChanging) return;
-          setState(() {
-            _selectedLanguage = _lessonMap.keys.toList()[_tabController.index];
-            _selectedLessonId = 1;
-          });
-        });
+        _updateTabController();
       });
       await _saveLessons();
     }
+  }
+
+  void _updateTabController() {
+    _tabController?.removeListener(_handleTabChange);
+    _tabController?.dispose();
+    _tabController = TabController(
+      length: _lessonMap.keys.length > 0 ? _lessonMap.keys.length : 1,
+      vsync: this,
+      initialIndex: _lessonMap.keys.isNotEmpty
+          ? _lessonMap.keys.toList().indexOf(_selectedLanguage) >= 0
+              ? _lessonMap.keys.toList().indexOf(_selectedLanguage)
+              : 0
+          : 0,
+    );
+    _tabController!.addListener(_handleTabChange);
   }
 
   void _showSettingsSheet() {
@@ -363,47 +356,29 @@ class _HomePageState extends State<HomePage>
   void _importLessons() async {
     try {
       if (kIsWeb) {
-        // Web: Use <input type="file">
         html.FileUploadInputElement uploadInput = html.FileUploadInputElement();
         uploadInput.accept = '.json';
         uploadInput.click();
-        uploadInput.onChange.listen((e) {
-          final file = uploadInput.files?.first;
+        await uploadInput.onChange.first;
+        final file = uploadInput.files?.first;
+        if (file != null) {
           final reader = html.FileReader();
-          reader.readAsText(file!);
-          reader.onLoadEnd.listen((e) {
-            final content = reader.result as String;
-            final imported = json.decode(content) as Map<String, dynamic>;
-            setState(() {
-              _lessonMap = imported.map(
-                (k, v) => MapEntry(k, List<Map<String, dynamic>>.from(v)),
-              );
-              // Re-init TabController
-              _tabController.dispose();
-              _tabController = TabController(
-                length: _lessonMap.keys.length,
-                vsync: this,
-                initialIndex: 0,
-              );
-              _selectedLanguage = _lessonMap.keys.first;
-              _selectedLessonId = 1;
-              _tabController.addListener(() {
-                if (_tabController.indexIsChanging) return;
-                setState(() {
-                  _selectedLanguage = _lessonMap.keys
-                      .toList()[_tabController.index];
-                  _selectedLessonId = 1;
-                });
-              });
-            });
-            _saveLessons();
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('Lessons imported!')));
+          reader.readAsText(file);
+          await reader.onLoadEnd.first;
+          final content = reader.result as String;
+          final imported = json.decode(content) as Map<String, dynamic>;
+          setState(() {
+            _lessonMap = imported.map(
+              (k, v) => MapEntry(k, List<Map<String, dynamic>>.from(v)),
+            );
+            _selectedLanguage = _lessonMap.keys.isNotEmpty ? _lessonMap.keys.first : 'HTML';
+            _selectedLessonId = 1;
+            _updateTabController();
           });
-        });
+          await _saveLessons();
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lessons imported!')));
+        }
       } else {
-        // Desktop: Use file_picker
         FilePickerResult? result = await FilePicker.platform.pickFiles(
           type: FileType.custom,
           allowedExtensions: ['json'],
@@ -416,34 +391,16 @@ class _HomePageState extends State<HomePage>
             _lessonMap = imported.map(
               (k, v) => MapEntry(k, List<Map<String, dynamic>>.from(v)),
             );
-            // Re-init TabController
-            _tabController.dispose();
-            _tabController = TabController(
-              length: _lessonMap.keys.length,
-              vsync: this,
-              initialIndex: 0,
-            );
-            _selectedLanguage = _lessonMap.keys.first;
+            _selectedLanguage = _lessonMap.keys.isNotEmpty ? _lessonMap.keys.first : 'HTML';
             _selectedLessonId = 1;
-            _tabController.addListener(() {
-              if (_tabController.indexIsChanging) return;
-              setState(() {
-                _selectedLanguage = _lessonMap.keys
-                    .toList()[_tabController.index];
-                _selectedLessonId = 1;
-              });
-            });
+            _updateTabController();
           });
-          _saveLessons();
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Lessons imported!')));
+          await _saveLessons();
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lessons imported!')));
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Import failed: $e')));
     }
   }
 
@@ -451,7 +408,6 @@ class _HomePageState extends State<HomePage>
     try {
       final jsonString = json.encode(_lessonMap);
       if (kIsWeb) {
-        // Web: Download as file
         final bytes = utf8.encode(jsonString);
         final blob = html.Blob([bytes]);
         final url = html.Url.createObjectUrlFromBlob(blob);
@@ -459,11 +415,8 @@ class _HomePageState extends State<HomePage>
           ..setAttribute('download', 'lessons_export.json')
           ..click();
         html.Url.revokeObjectUrl(url);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Lessons exported!')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lessons exported!')));
       } else {
-        // Desktop: Save file dialog
         String? output = await FilePicker.platform.saveFile(
           dialogTitle: 'Export Lessons As',
           fileName: 'lessons_export.json',
@@ -473,30 +426,29 @@ class _HomePageState extends State<HomePage>
         if (output != null) {
           final file = io.File(output);
           await file.writeAsString(jsonString);
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Lessons exported!')));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lessons exported!')));
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Export failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Export failed: $e')));
     }
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
+    _tabController?.removeListener(_handleTabChange);
+    _tabController?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
     }
-    final lessons = _lessonMap[_selectedLanguage]!;
+    final lessons = _lessonMap[_selectedLanguage] ?? [];
 
     return Scaffold(
       backgroundColor: Colors.orange[50],
@@ -505,19 +457,15 @@ class _HomePageState extends State<HomePage>
         elevation: 0,
         title: Row(
           children: [
-            // Logo image
-            Image.asset(
-              'assets/logo.png', // သင့် logo path ကို ဤနေရာတွင် သတ်မှတ်ပါ
-              height: 36,
-            ),
+            Image.asset('assets/logo.png', height: 36),
             const SizedBox(width: 10),
             Text(
               'YHA Computer',
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                color: Colors.orange[800],
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-              ),
+                    color: Colors.orange[800],
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.2,
+                  ),
             ),
           ],
         ),
@@ -531,14 +479,8 @@ class _HomePageState extends State<HomePage>
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
                 child: Container(
-                  margin: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 6,
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 0,
-                  ),
+                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.55),
                     borderRadius: BorderRadius.circular(18),
@@ -570,10 +512,7 @@ class _HomePageState extends State<HomePage>
                         ),
                       ],
                     ),
-                    indicatorPadding: const EdgeInsets.symmetric(
-                      vertical: 6,
-                      horizontal: 2,
-                    ),
+                    indicatorPadding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
                     labelColor: Colors.white,
                     unselectedLabelColor: Colors.orange[700],
                     labelStyle: const TextStyle(
@@ -632,31 +571,19 @@ class _HomePageState extends State<HomePage>
       ),
       body: Column(
         children: [
-          // Rapid Typing Stats
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
             child: Row(
               children: [
                 _buildStatCard('WPM', '45', Icons.speed, Colors.orange),
                 const SizedBox(width: 12),
-                _buildStatCard(
-                  'Accuracy',
-                  '92%',
-                  Icons.track_changes,
-                  Colors.orange,
-                ),
+                _buildStatCard('Accuracy', '92%', Icons.track_changes, Colors.orange),
                 const SizedBox(width: 12),
-                _buildStatCard(
-                  'Lessons',
-                  '${lessons.length}',
-                  Icons.school,
-                  Colors.orange,
-                ),
+                _buildStatCard('Lessons', '${lessons.length}', Icons.school, Colors.orange),
               ],
             ),
           ),
           const SizedBox(height: 10),
-          // Lesson List
           Expanded(
             child: Container(
               decoration: BoxDecoration(
@@ -682,15 +609,11 @@ class _HomePageState extends State<HomePage>
                       children: [
                         Row(
                           children: [
-                            Icon(
-                              Icons.menu_book_rounded,
-                              color: Colors.orange[400],
-                            ),
+                            Icon(Icons.menu_book_rounded, color: Colors.orange[400]),
                             const SizedBox(width: 8),
                             Text(
                               'Lessons ($_selectedLanguage)',
-                              style: Theme.of(context).textTheme.titleLarge
-                                  ?.copyWith(
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                     fontWeight: FontWeight.bold,
                                     color: Colors.orange[800],
                                   ),
@@ -698,10 +621,7 @@ class _HomePageState extends State<HomePage>
                           ],
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
                             color: Colors.orange[50],
                             borderRadius: BorderRadius.circular(10),
@@ -735,30 +655,23 @@ class _HomePageState extends State<HomePage>
                             itemCount: lessons.length,
                             itemBuilder: (context, index) {
                               final lesson = lessons[index];
-                              final isSelected =
-                                  _selectedLessonId == lesson['id'];
+                              final isSelected = _selectedLessonId == lesson['id'];
                               return AnimatedContainer(
                                 duration: const Duration(milliseconds: 250),
                                 curve: Curves.easeInOut,
                                 margin: const EdgeInsets.only(bottom: 12),
                                 padding: const EdgeInsets.all(16),
                                 decoration: BoxDecoration(
-                                  color: isSelected
-                                      ? Colors.orange[50]
-                                      : Colors.grey[50],
+                                  color: isSelected ? Colors.orange[50] : Colors.grey[50],
                                   borderRadius: BorderRadius.circular(14),
                                   border: Border.all(
-                                    color: isSelected
-                                        ? Colors.orange
-                                        : Colors.orange[100]!,
+                                    color: isSelected ? Colors.orange : Colors.orange[100]!,
                                     width: isSelected ? 2 : 1,
                                   ),
                                   boxShadow: isSelected
                                       ? [
                                           BoxShadow(
-                                            color: Colors.orange.withOpacity(
-                                              0.12,
-                                            ),
+                                            color: Colors.orange.withOpacity(0.12),
                                             blurRadius: 12,
                                             offset: const Offset(0, 4),
                                           ),
@@ -777,9 +690,7 @@ class _HomePageState extends State<HomePage>
                                       Container(
                                         decoration: BoxDecoration(
                                           color: Colors.orange[100],
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
+                                          borderRadius: BorderRadius.circular(8),
                                         ),
                                         padding: const EdgeInsets.all(8),
                                         child: Icon(
@@ -791,16 +702,13 @@ class _HomePageState extends State<HomePage>
                                       const SizedBox(width: 16),
                                       Expanded(
                                         child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
+                                          crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
                                             Text(
                                               lesson['title'],
                                               style: TextStyle(
                                                 fontWeight: FontWeight.bold,
-                                                color: isSelected
-                                                    ? Colors.orange[800]
-                                                    : Colors.black,
+                                                color: isSelected ? Colors.orange[800] : Colors.black,
                                                 fontSize: 16,
                                               ),
                                             ),
@@ -826,7 +734,6 @@ class _HomePageState extends State<HomePage>
               ),
             ),
           ),
-          // Big Start Button
           Padding(
             padding: const EdgeInsets.all(20.0),
             child: SizedBox(
@@ -836,13 +743,11 @@ class _HomePageState extends State<HomePage>
                 onPressed: lessons.isEmpty ? null : _startPractice,
                 icon: const Icon(Icons.play_arrow, size: 28),
                 label: Text(
-                  lessons.isEmpty
-                      ? 'No Lesson'
-                      : 'Start Lesson $_selectedLessonId',
+                  lessons.isEmpty ? 'No Lesson' : 'Start Lesson $_selectedLessonId',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.orange,
@@ -861,12 +766,7 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  Widget _buildStatCard(
-    String title,
-    String value,
-    IconData icon,
-    Color color,
-  ) {
+  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 18),
@@ -890,193 +790,6 @@ class _HomePageState extends State<HomePage>
             Text(
               title,
               style: TextStyle(color: Colors.orange[700], fontSize: 14),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class PracticePage extends StatefulWidget {
-  const PracticePage({super.key});
-
-  @override
-  State<PracticePage> createState() => _PracticePageState();
-}
-
-class _PracticePageState extends State<PracticePage> {
-  String _selectedLanguage = 'HTML';
-  int _selectedLessonId = 1;
-  Map<String, List<Map<String, dynamic>>> _lessonMap = {};
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadLessons();
-  }
-
-  Future<void> _loadLessons() async {
-    final loaded = await LessonStorage.loadLessons();
-    setState(() {
-      _lessonMap = loaded.map(
-        (k, v) => MapEntry(k, List<Map<String, dynamic>>.from(v)),
-      );
-      _selectedLanguage = _lessonMap.keys.first;
-      _selectedLessonId = 1;
-      _loading = false;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    final lessons = _lessonMap[_selectedLanguage]!;
-    final lesson = lessons.firstWhere((l) => l['id'] == _selectedLessonId);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Practice - ${lesson['title']}'),
-        backgroundColor: Colors.orange,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Lesson Info
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.orange[50],
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.orange.withOpacity(0.1),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    lesson['title'],
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                      color: Colors.orange[800],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    lesson['description'],
-                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            // Typing Text
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.orange.withOpacity(0.1),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Typing Practice',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: Colors.orange[800],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.orange[50],
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.orange[200]!),
-                        ),
-                        child: Text(
-                          lesson['typingText'],
-                          style: TextStyle(
-                            fontSize: 16,
-                            height: 1.4,
-                            letterSpacing: 0.5,
-                            color: Colors.orange[900],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      // TODO: Add typing input field and logic
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Navigation Buttons
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: () {
-                    // TODO: Navigate to previous lesson
-                  },
-                  icon: const Icon(Icons.arrow_back),
-                  label: const Text('Previous Lesson'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 12,
-                    ),
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    // TODO: Navigate to next lesson
-                  },
-                  icon: const Icon(Icons.arrow_forward),
-                  label: const Text('Next Lesson'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 12,
-                    ),
-                  ),
-                ),
-              ],
             ),
           ],
         ),
