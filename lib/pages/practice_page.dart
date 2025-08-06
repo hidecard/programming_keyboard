@@ -3,6 +3,8 @@ import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/github.dart';
 import '../models/statistics.dart';
 import '../models/achievement.dart';
+import 'dart:async';
+import 'package:flutter/services.dart';
 
 class PracticePage extends StatefulWidget {
   const PracticePage({super.key});
@@ -17,6 +19,12 @@ class _PracticePageState extends State<PracticePage> {
   String _targetCode = '';
   final TextEditingController _typingController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+
+  // State variables
+  String? _currentKey;
+  bool _showHomeRow = true;
+  int _countdown = 0;
+  Timer? _countdownTimer;
 
   bool _isStarted = false;
   bool _isCompleted = false;
@@ -184,6 +192,10 @@ document.addEventListener('DOMContentLoaded', function() {
     super.initState();
     _typingController.addListener(_onTextChanged);
 
+    // Keyboard event listener
+    FocusManager.instance.primaryFocus?.unfocus();
+    RawKeyboard.instance.addListener(_onRawKey);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final args =
           ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
@@ -201,6 +213,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
   @override
   void dispose() {
+    RawKeyboard.instance.removeListener(_onRawKey);
+    _countdownTimer?.cancel();
     _typingController.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -246,7 +260,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   void _updateTimer() {
     if (!_isStarted || _isCompleted) return;
-    if (!mounted) return; // <-- ဒီလိုထည့်ပါ
+    if (!mounted) return;
     setState(() {
       _currentTime = DateTime.now().millisecondsSinceEpoch - _startTime;
     });
@@ -471,147 +485,6 @@ document.addEventListener('DOMContentLoaded', function() {
     return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
   }
 
-  Widget _buildTypingArea() {
-    return Container(
-      margin: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey[300]!),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(12),
-                topRight: Radius.circular(12),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.edit, size: 16),
-                const SizedBox(width: 8),
-                Text(
-                  'Your Code',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const Spacer(),
-                // Real-time position indicator
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    'Position: $_currentPosition',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: TextField(
-                controller: _typingController,
-                focusNode: _focusNode,
-                maxLines: null,
-                expands: true,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  hintText: 'Start typing here...',
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTargetCodeArea() {
-    return Container(
-      margin: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey[300]!),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(12),
-                topRight: Radius.circular(12),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.code, size: 16),
-                const SizedBox(width: 8),
-                Text(
-                  'Target Code',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const Spacer(),
-                // Character counter
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.blue[100],
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '$_currentPosition/$_totalCharacters',
-                    style: TextStyle(
-                      color: Colors.blue[700],
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: RichText(
-                text: TextSpan(
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 14,
-                    color: Colors.black,
-                  ),
-                  children: _buildColoredText(),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   List<TextSpan> _buildColoredText() {
     List<TextSpan> spans = [];
 
@@ -655,6 +528,309 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     return spans;
+  }
+
+  // Keyboard event handler
+  void _onRawKey(RawKeyEvent event) {
+    if (event is RawKeyDownEvent) {
+      setState(() {
+        _currentKey = _mapLogicalKeyToChar(event.logicalKey);
+      });
+    } else if (event is RawKeyUpEvent) {
+      setState(() {
+        _currentKey = null;
+      });
+    }
+  }
+
+  // Map logical keys to characters, including additional symbols
+  String? _mapLogicalKeyToChar(LogicalKeyboardKey key) {
+    final keyLabel = key.keyLabel?.toLowerCase() ?? '';
+    const symbolMap = {
+      'semicolon': ';',
+      'equal': '=',
+      'comma': ',',
+      'minus': '-',
+      'period': '.',
+      'slash': '/',
+      'backslash': '\\',
+      'quote': '\'',
+      'backquote': '`',
+      'open bracket': '[',
+      'close bracket': ']',
+      'open brace': '{',
+      'close brace': '}',
+      'less than': '<',
+      'greater than': '>',
+      'vertical line': '|',
+      'space': ' ',
+      'tab': 'tab',
+      'shift left': 'shift',
+      'shift right': 'shift',
+      '1': '1',
+      '2': '2',
+      '3': '3',
+      '4': '4',
+      '5': '5',
+      '6': '6',
+      '7': '7',
+      '8': '8',
+      '9': '9',
+      '0': '0',
+    };
+    return symbolMap[keyLabel] ?? keyLabel;
+  }
+
+  // Countdown logic
+  void _startCountdown(int seconds) {
+    setState(() {
+      _countdown = seconds;
+    });
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      setState(() {
+        if (_countdown > 0) {
+          _countdown--;
+        } else {
+          timer.cancel();
+          _startPractice();
+        }
+      });
+    });
+  }
+
+  // Virtual Keyboard Widget
+  Widget _buildVirtualKeyboard() {
+    // Define keyboard rows including numbers, symbols, shift, and tab
+    final rows = [
+      // Number row
+      ['tab', '`', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '|'],
+      // Top row
+      ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '{', '}', '\\'],
+      // Home row
+      ['shift', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '<', '>'],
+      // Bottom row
+      ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/'],
+      // Space bar
+      ['space'],
+    ];
+
+    // Determine the next keys to highlight (including Shift for uppercase)
+    List<String> nextKeys = [];
+    if (_currentPosition < _targetCode.length) {
+      final nextChar = _targetCode[_currentPosition];
+      final mappedKey = _mapCharToKeyboardKey(nextChar);
+      nextKeys.add(mappedKey);
+      // If the next character is uppercase, also highlight Shift
+      if (nextChar.toUpperCase() != nextChar.toLowerCase() && nextChar == nextChar.toUpperCase()) {
+        nextKeys.add('shift');
+      }
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 8, bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.orange[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange[100]!),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: rows.map((row) {
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: row.map((key) {
+              final isHome = ['shift','a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '<', '>'].contains(key);
+              final isActive = _currentKey == key;
+              final isNext = nextKeys.contains(key) && !isActive;
+              final isSpace = key == 'space';
+              final isShift = key == 'shift';
+              final isTab = key == 'tab';
+
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+                padding: EdgeInsets.symmetric(
+                  horizontal: isSpace ? 40 : (isShift || isTab) ? 20 : 12,
+                  vertical: isSpace ? 8 : 10,
+                ),
+                decoration: BoxDecoration(
+                  color: isActive
+                      ? Colors.orange
+                      : isNext
+                          ? Colors.blue[100]
+                          : isHome && _showHomeRow
+                              ? Colors.orange[100]
+                              : Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isActive
+                        ? Colors.orange[700]!
+                        : isNext
+                            ? Colors.blue[700]!
+                            : isHome && _showHomeRow
+                                ? Colors.orange
+                                : Colors.grey[300]!,
+                    width: isActive || isNext ? 2 : 1,
+                  ),
+                  boxShadow: isActive || isNext
+                      ? [
+                          BoxShadow(
+                            color: (isActive ? Colors.orange : Colors.blue).withOpacity(0.18),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : [],
+                ),
+                child: Text(
+                  isSpace ? 'Space' : (isShift ? 'Shift' : (isTab ? 'Tab' : key.toUpperCase())),
+                  style: TextStyle(
+                    color: isActive
+                        ? Colors.white
+                        : isNext
+                            ? Colors.blue[800]
+                            : isHome && _showHomeRow
+                                ? Colors.orange[800]
+                                : Colors.grey[800],
+                    fontWeight: isActive || isNext ? FontWeight.bold : FontWeight.normal,
+                    fontSize: isSpace ? 16 : (isShift || isTab) ? 14 : 18,
+                  ),
+                ),
+              );
+            }).toList(),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  // Map target character to keyboard key
+  String _mapCharToKeyboardKey(String char) {
+    const charToKeyMap = {
+      ' ': 'space',
+      ';': 'semicolon',
+      '=': 'equal',
+      ',': 'comma',
+      '-': 'minus',
+      '.': 'period',
+      '/': 'slash',
+      '\\': 'backslash',
+      '\'': 'quote',
+      '`': 'backquote',
+      '[': 'open bracket',
+      ']': 'close bracket',
+      '{': 'open brace',
+      '}': 'close brace',
+      '<': 'less than',
+      '>': 'greater than',
+      '|': 'vertical line',
+      '\t': 'tab',
+    };
+    return charToKeyMap[char] ?? char.toLowerCase();
+  }
+
+  // Enhanced Countdown UI
+  Widget _buildCountdown() {
+    if (_countdown > 0) {
+      return Container(
+        margin: const EdgeInsets.only(top: 16),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            AnimatedScale(
+              scale: _countdown > 0 ? 1.0 + (_countdown % 2) * 0.1 : 1.0,
+              duration: const Duration(milliseconds: 500),
+              child: Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.orange[100],
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.orange.withOpacity(0.3),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: Text(
+                    '$_countdown',
+                    style: TextStyle(
+                      color: Colors.orange[800],
+                      fontWeight: FontWeight.bold,
+                      fontSize: 48,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 120,
+              height: 120,
+              child: CircularProgressIndicator(
+                value: _countdown / 3,
+                strokeWidth: 6,
+                backgroundColor: Colors.grey[200],
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.orange[700]!),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  void _startPractice() {
+    // Reset state and start timer
+    setState(() {
+      _isStarted = true;
+      _isCompleted = false;
+      _startTime = DateTime.now().millisecondsSinceEpoch;
+      _currentTime = 0;
+      _correctCharacters = 0;
+      _wpm = 0.0;
+      _accuracy = 0.0;
+      _errors = 0;
+      _currentPosition = 0;
+      _currentCharIndex = 0;
+      _charStatus = List.filled(_totalCharacters, false);
+    });
+    _typingController.clear();
+    _focusNode.requestFocus();
+    _updateTimer();
+  }
+
+  Widget _buildMetric(String label, String value, IconData icon) {
+    return Column(
+      children: [
+        Icon(icon, size: 16, color: Colors.grey[600]),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+      ],
+    );
+  }
+
+  String _getLanguageString() {
+    switch (_selectedLanguage) {
+      case 'HTML':
+        return 'html';
+      case 'CSS':
+        return 'css';
+      case 'JavaScript':
+        return 'javascript';
+      default:
+        return 'html';
+    }
   }
 
   @override
@@ -707,7 +883,7 @@ document.addEventListener('DOMContentLoaded', function() {
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.bold,
                         color: Colors.orange[800],
-                        fontSize: 22, // Lesson font size ကြီးစေ
+                        fontSize: 22,
                       ),
                     ),
                     Text(
@@ -754,6 +930,9 @@ document.addEventListener('DOMContentLoaded', function() {
               ],
             ),
           ),
+
+          // Countdown
+          _buildCountdown(),
 
           // Main Content
           Expanded(
@@ -840,8 +1019,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 text: TextSpan(
                                   style: const TextStyle(
                                     fontFamily: 'monospace',
-                                    fontSize:
-                                        18, // Target code font size ကြီးစေ
+                                    fontSize: 18,
                                     color: Colors.black,
                                   ),
                                   children: _buildColoredText(),
@@ -911,7 +1089,7 @@ document.addEventListener('DOMContentLoaded', function() {
                               expands: true,
                               style: const TextStyle(
                                 fontFamily: 'monospace',
-                                fontSize: 18, // Typing font size ကြီးစေ
+                                fontSize: 18,
                               ),
                               decoration: const InputDecoration(
                                 border: InputBorder.none,
@@ -928,148 +1106,19 @@ document.addEventListener('DOMContentLoaded', function() {
             ),
           ),
 
-          // Virtual Keyboard with Real-time Feedback
-          Container(
-            height: 80,
-            padding: const EdgeInsets.all(12),
-            color: Colors.orange[50],
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.grey[300]!),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Current Character',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 10,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _currentPosition < _targetCode.length
-                              ? _targetCode[_currentPosition]
-                              : '✓',
-                          style: TextStyle(
-                            color: _currentPosition < _targetCode.length
-                                ? Theme.of(context).colorScheme.primary
-                                : Colors.green,
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.grey[300]!),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Typing Speed',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 10,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${_wpm.toStringAsFixed(1)} WPM',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.primary,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.grey[300]!),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Accuracy',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 10,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${_accuracy.toStringAsFixed(1)}%',
-                          style: TextStyle(
-                            color: _accuracy > 90
-                                ? Colors.green
-                                : _accuracy > 70
-                                ? Colors.orange
-                                : Colors.red,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          // Virtual Keyboard Overlay
+          _buildVirtualKeyboard(),
         ],
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () {
+          _startCountdown(3); // 3 seconds countdown
+        },
+        icon: const Icon(Icons.timer),
+        label: const Text('Start Countdown'),
+        backgroundColor: Colors.orange,
+        foregroundColor: Colors.white,
+      ),
     );
-  }
-
-  Widget _buildMetric(String label, String value, IconData icon) {
-    return Column(
-      children: [
-        Icon(icon, size: 16, color: Colors.grey[600]),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        ),
-        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
-      ],
-    );
-  }
-
-  String _getLanguageString() {
-    switch (_selectedLanguage) {
-      case 'HTML':
-        return 'html';
-      case 'CSS':
-        return 'css';
-      case 'JavaScript':
-        return 'javascript';
-      default:
-        return 'html';
-    }
   }
 }
