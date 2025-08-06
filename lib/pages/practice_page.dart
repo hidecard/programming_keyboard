@@ -727,7 +727,6 @@ document.addEventListener('DOMContentLoaded', function() {
       '!': ['1', 'shift'],
       '@': ['2', 'shift'],
       '#': ['3', 'shift'],
-      '$': ['4', 'shift'],
       '%': ['5', 'shift'],
       '^': ['6', 'shift'],
       '&': ['7', 'shift'],
