@@ -543,7 +543,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  // Map logical keys to characters, including additional symbols
+  // Map logical keys to characters or key identifiers
   String? _mapLogicalKeyToChar(LogicalKeyboardKey key) {
     final keyLabel = key.keyLabel?.toLowerCase() ?? '';
     const symbolMap = {
@@ -602,7 +602,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Virtual Keyboard Widget
   Widget _buildVirtualKeyboard() {
-    // Define keyboard rows including numbers, symbols, shift, and tab
+    // Define keyboard rows with symbols matching their input characters
     final rows = [
       // Number row
       ['tab', '`', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '|'],
@@ -616,16 +616,12 @@ document.addEventListener('DOMContentLoaded', function() {
       ['space'],
     ];
 
-    // Determine the next keys to highlight (including Shift for uppercase)
+    // Determine the next keys to highlight (including Shift for uppercase or shifted symbols)
     List<String> nextKeys = [];
     if (_currentPosition < _targetCode.length) {
       final nextChar = _targetCode[_currentPosition];
-      final mappedKey = _mapCharToKeyboardKey(nextChar);
-      nextKeys.add(mappedKey);
-      // If the next character is uppercase, also highlight Shift
-      if (nextChar.toUpperCase() != nextChar.toLowerCase() && nextChar == nextChar.toUpperCase()) {
-        nextKeys.add('shift');
-      }
+      final mappedKeys = _mapCharToKeyboardKey(nextChar);
+      nextKeys.addAll(mappedKeys);
     }
 
     return Container(
@@ -686,7 +682,7 @@ document.addEventListener('DOMContentLoaded', function() {
                       : [],
                 ),
                 child: Text(
-                  isSpace ? 'Space' : (isShift ? 'Shift' : (isTab ? 'Tab' : key.toUpperCase())),
+                  isSpace ? 'Space' : (isShift ? 'Shift' : (isTab ? 'Tab' : key)),
                   style: TextStyle(
                     color: isActive
                         ? Colors.white
@@ -707,29 +703,52 @@ document.addEventListener('DOMContentLoaded', function() {
     );
   }
 
-  // Map target character to keyboard key
-  String _mapCharToKeyboardKey(String char) {
+  // Map target character to keyboard key(s), handling Shift for uppercase and shifted symbols
+  List<String> _mapCharToKeyboardKey(String char) {
     const charToKeyMap = {
-      ' ': 'space',
-      ';': 'semicolon',
-      '=': 'equal',
-      ',': 'comma',
-      '-': 'minus',
-      '.': 'period',
-      '/': 'slash',
-      '\\': 'backslash',
-      '\'': 'quote',
-      '`': 'backquote',
-      '[': 'open bracket',
-      ']': 'close bracket',
-      '{': 'open brace',
-      '}': 'close brace',
-      '<': 'less than',
-      '>': 'greater than',
-      '|': 'vertical line',
-      '\t': 'tab',
+      ' ': ['space'],
+      ';': ['semicolon'],
+      '=': ['equal'],
+      ',': ['comma'],
+      '-': ['minus'],
+      '.': ['period'],
+      '/': ['slash'],
+      '\\': ['backslash'],
+      '\'': ['quote'],
+      '`': ['backquote'],
+      '[': ['open bracket'],
+      ']': ['close bracket'],
+      '{': ['open bracket', 'shift'], // Shift + [
+      '}': ['close bracket', 'shift'], // Shift + ]
+      '<': ['less than'],
+      '>': ['greater than'],
+      '|': ['vertical line'],
+      '\t': ['tab'],
+      '!': ['1', 'shift'],
+      '@': ['2', 'shift'],
+      '#': ['3', 'shift'],
+      '$': ['4', 'shift'],
+      '%': ['5', 'shift'],
+      '^': ['6', 'shift'],
+      '&': ['7', 'shift'],
+      '*': ['8', 'shift'],
+      '(': ['9', 'shift'],
+      ')': ['0', 'shift'],
+      '_': ['minus', 'shift'],
+      '+': ['equal', 'shift'],
+      ':': ['semicolon', 'shift'],
+      '"': ['quote', 'shift'],
+      '~': ['backquote', 'shift'],
+      '?': ['slash', 'shift'],
     };
-    return charToKeyMap[char] ?? char.toLowerCase();
+
+    // Handle uppercase letters
+    if (char.toUpperCase() != char.toLowerCase() && char == char.toUpperCase()) {
+      return [char.toLowerCase(), 'shift'];
+    }
+
+    // Return mapped keys or the lowercase character as a single-item list
+    return charToKeyMap[char] ?? [char.toLowerCase()];
   }
 
   // Enhanced Countdown UI
