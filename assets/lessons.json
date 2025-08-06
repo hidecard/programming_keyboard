@@ -1,0 +1,26 @@
+{
+  "HTML": [
+    {
+      "id": 1,
+      "title": "Basic Structure",
+      "description": "Learn the basic HTML structure.",
+      "typingText": "<!DOCTYPE html>\n<html>...</html>"
+    }
+  ],
+  "CSS": [
+    {
+      "id": 1,
+      "title": "Styling Basics",
+      "description": "Type basic CSS selectors and properties.",
+      "typingText": "body { ... }"
+    }
+  ],
+  "JavaScript": [
+    {
+      "id": 1,
+      "title": "Variables & Data Types",
+      "description": "Type JS variable declarations.",
+      "typingText": "let name = \"Alice\";"
+    }
+  ]
+}
