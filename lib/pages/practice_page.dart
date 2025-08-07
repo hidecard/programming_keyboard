@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_highlight/flutter_highlight.dart';
-import 'package:flutter_highlight/themes/github.dart';
-import '../models/statistics.dart';
-import '../models/achievement.dart';
 import 'package:flutter/services.dart';
+import 'dart:async';
 
 class PracticePage extends StatefulWidget {
   const PracticePage({super.key});
@@ -12,12 +9,17 @@ class PracticePage extends StatefulWidget {
   State<PracticePage> createState() => _PracticePageState();
 }
 
-class _PracticePageState extends State<PracticePage> {
+class _PracticePageState extends State<PracticePage> with TickerProviderStateMixin {
   String _selectedLanguage = 'HTML';
   int _selectedLesson = 1;
   String _targetCode = '';
   final TextEditingController _typingController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  final ScrollController _targetScrollController = ScrollController();
+  final ScrollController _typingScrollController = ScrollController();
+  bool _isManualScrolling = false;
+  Timer? _scrollDebounceTimer;
+  Timer? _textChangeDebounceTimer;
 
   // State variables
   String? _currentKey;
@@ -33,168 +35,30 @@ class _PracticePageState extends State<PracticePage> {
   int _errors = 0;
   int _currentPosition = 0;
   int _currentCharIndex = 0;
-  List<bool> _charStatus = []; // true = correct, false = incorrect
-
-  final Map<String, Map<int, String>> _lessonSnippets = {
-    'HTML': {
-      1: '''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Website</title>
-</head>
-<body>
-    <header>
-        <h1>Welcome to My Site</h1>
-        <nav>
-            <ul>
-                <li><a href="#home">Home</a></li>
-                <li><a href="#about">About</a></li>
-                <li><a href="#contact">Contact</a></li>
-            </ul>
-        </nav>
-    </header>
-    <main>
-        <section id="home">
-            <h2>Home</h2>
-            <p>This is the home section.</p>
-        </section>
-    </main>
-    <footer>
-        <p>&copy; 2024 My Website</p>
-    </footer>
-</body>
-</html>''',
-      2: '''<nav class="main-nav">
-    <ul class="nav-list">
-        <li class="nav-item">
-            <a href="/" class="nav-link">Home</a>
-        </li>
-        <li class="nav-item">
-            <a href="/products" class="nav-link">Products</a>
-        </li>
-        <li class="nav-item">
-            <a href="/services" class="nav-link">Services</a>
-        </li>
-        <li class="nav-item">
-            <a href="/contact" class="nav-link">Contact</a>
-        </li>
-    </ul>
-</nav>''',
-      3: '''<form class="contact-form" action="/submit" method="POST">
-    <div class="form-group">
-        <label for="name">Full Name:</label>
-        <input type="text" id="name" name="name" required>
-    </div>
-    <div class="form-group">
-        <label for="email">Email Address:</label>
-        <input type="email" id="email" name="email" required>
-    </div>
-    <div class="form-group">
-        <label for="message">Message:</label>
-        <textarea id="message" name="message" rows="5" required></textarea>
-    </div>
-    <button type="submit" class="submit-btn">Send Message</button>
-</form>''',
-    },
-    'CSS': {
-      4: '''/* Reset and base styles */
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-body {
-    font-family: 'Arial', sans-serif;
-    line-height: 1.6;
-    color: #333;
-    background-color: #f4f4f4;
-}
-
-/* Header styles */
-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 1rem 0;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-}''',
-      5: '''/* Flexbox Layout */
-.container {
-    display: flex;
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 20px;
-    padding: 20px;
-}
-
-.card {
-    flex: 1;
-    min-width: 300px;
-    background: white;
-    border-radius: 10px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    padding: 20px;
-    transition: transform 0.3s ease;
-}
-
-.card:hover {
-    transform: translateY(-5px);
-}''',
-    },
-    'JavaScript': {
-      6: '''// Utility functions
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-// DOM manipulation
-document.addEventListener('DOMContentLoaded', function() {
-    const header = document.querySelector('header');
-    const navLinks = document.querySelectorAll('nav a');
-    
-    // Smooth scrolling for navigation links
-    navLinks.forEach(link => {
-        link.addEventListener('click', function(e) {
-            e.preventDefault();
-            const targetId = this.getAttribute('href').substring(1);
-            const targetSection = document.getElementById(targetId);
-            
-            if (targetSection) {
-                targetSection.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'start'
-                });
-            }
-        });
-    });
-});''',
-    },
-  };
+  List<bool> _charStatus = [];
+  List<TextSpan>? _cachedSpans;
+  int? _lastPosition;
+  List<bool>? _lastCharStatus;
 
   @override
   void initState() {
     super.initState();
     _typingController.addListener(_onTextChanged);
+    _focusNode.addListener(_onFocusChange);
 
-    // Keyboard event listener
     FocusManager.instance.primaryFocus?.unfocus();
     RawKeyboard.instance.addListener(_onRawKey);
 
+    _targetScrollController.addListener(() {
+      if (_targetScrollController.position.isScrollingNotifier.value) {
+        _isManualScrolling = true;
+      } else {
+        _isManualScrolling = false;
+      }
+    });
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final args =
-          ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+      final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
       if (args != null) {
         setState(() {
           _selectedLanguage = args['language'] ?? 'HTML';
@@ -207,42 +71,58 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
+  void _onFocusChange() {
+    if (_focusNode.hasFocus) {
+      _autoScrollToCurrentPosition();
+    }
+  }
+
   @override
   void dispose() {
+    _textChangeDebounceTimer?.cancel();
+    _scrollDebounceTimer?.cancel();
     RawKeyboard.instance.removeListener(_onRawKey);
+    _typingController.removeListener(_onTextChanged);
+    _focusNode.removeListener(_onFocusChange);
     _typingController.dispose();
     _focusNode.dispose();
+    _targetScrollController.dispose();
+    _typingScrollController.dispose();
     super.dispose();
   }
 
   void _onTextChanged() {
-    if (!_isStarted) {
-      _startTimer();
-    }
-
-    final typedText = _typingController.text;
-    _correctCharacters = 0;
-    _errors = 0;
-    _currentPosition = typedText.length;
-    _currentCharIndex = typedText.length;
-
-    // Update character status for real-time tracking
-    for (int i = 0; i < typedText.length && i < _targetCode.length; i++) {
-      bool isCorrect = typedText[i] == _targetCode[i];
-      _charStatus[i] = isCorrect;
-
-      if (isCorrect) {
-        _correctCharacters++;
-      } else {
-        _errors++;
+    _textChangeDebounceTimer?.cancel();
+    _textChangeDebounceTimer = Timer(const Duration(milliseconds: 50), () {
+      if (!_isStarted && _targetCode.isNotEmpty) {
+        _startTimer();
       }
-    }
 
-    _calculateMetrics();
+      final typedText = _typingController.text;
+      _correctCharacters = 0;
+      _errors = 0;
+      _currentPosition = typedText.length;
+      _currentCharIndex = typedText.length;
 
-    if (typedText.length >= _targetCode.length) {
-      _completePractice();
-    }
+      for (int i = 0; i < typedText.length && i < _targetCode.length; i++) {
+        bool isCorrect = typedText[i] == _targetCode[i];
+        _charStatus[i] = isCorrect;
+        if (isCorrect) {
+          _correctCharacters++;
+        } else {
+          _errors++;
+        }
+      }
+
+      _calculateMetrics();
+      _autoScrollToCurrentPosition();
+
+      if (typedText.length >= _targetCode.length && _targetCode.isNotEmpty) {
+        _completePractice();
+      }
+
+      setState(() {});
+    });
   }
 
   void _startTimer() {
@@ -254,11 +134,15 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   void _updateTimer() {
-    if (!_isStarted || _isCompleted) return;
-    if (!mounted) return;
-    setState(() {
-      _currentTime = DateTime.now().millisecondsSinceEpoch - _startTime;
-    });
+    if (!_isStarted || _isCompleted || !mounted) return;
+
+    final newTime = DateTime.now().millisecondsSinceEpoch - _startTime;
+    if ((newTime - _currentTime).abs() > 100) {
+      setState(() {
+        _currentTime = newTime;
+      });
+      _calculateMetrics();
+    }
     Future.delayed(const Duration(milliseconds: 100), _updateTimer);
   }
 
@@ -274,12 +158,57 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
+  void _autoScrollToCurrentPosition() {
+    if (_isManualScrolling || _isCompleted || _targetCode.isEmpty) return;
+
+    _scrollDebounceTimer?.cancel();
+    _scrollDebounceTimer = Timer(const Duration(milliseconds: 100), () {
+      final textBeforeCursor = _typingController.text.substring(0, _currentPosition);
+      final textSpan = TextSpan(
+        text: textBeforeCursor,
+        style: const TextStyle(
+          fontFamily: 'RobotoMono',
+          fontSize: 16,
+          height: 1.5,
+        ),
+      );
+
+      final textPainter = TextPainter(
+        text: textSpan,
+        textDirection: TextDirection.ltr,
+        maxLines: null,
+      )..layout(maxWidth: MediaQuery.of(context).size.width / 2);
+
+      final caretOffset = textPainter.getOffsetForCaret(
+        TextPosition(offset: _currentPosition),
+        Rect.zero,
+      );
+
+      final targetOffset = caretOffset.dy - (MediaQuery.of(context).size.height / 4);
+
+      if (_targetScrollController.hasClients) {
+        _targetScrollController.animateTo(
+          targetOffset.clamp(0.0, _targetScrollController.position.maxScrollExtent),
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+        );
+      }
+
+      if (_typingScrollController.hasClients) {
+        _typingScrollController.animateTo(
+          targetOffset.clamp(0.0, _typingScrollController.position.maxScrollExtent),
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    });
+  }
+
   void _completePractice() {
     setState(() {
       _isCompleted = true;
     });
 
-    // Create practice session and update statistics
     final session = PracticeSession(
       language: _selectedLanguage,
       lessonId: _selectedLesson,
@@ -292,8 +221,6 @@ document.addEventListener('DOMContentLoaded', function() {
     );
 
     StatisticsService.updateStatistics(session);
-
-    // Show enhanced completion dialog
     _showCompletionDialog();
   }
 
@@ -315,7 +242,6 @@ document.addEventListener('DOMContentLoaded', function() {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Performance Summary
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -334,28 +260,14 @@ document.addEventListener('DOMContentLoaded', function() {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _buildResultRow(
-                      'WPM',
-                      '${_wpm.toStringAsFixed(1)}',
-                      Icons.speed,
-                    ),
-                    _buildResultRow(
-                      'Accuracy',
-                      '${_accuracy.toStringAsFixed(1)}%',
-                      Icons.track_changes,
-                    ),
-                    _buildResultRow(
-                      'Time',
-                      _formatTime(_currentTime),
-                      Icons.access_time,
-                    ),
+                    _buildResultRow('WPM', '${_wpm.toStringAsFixed(1)}', Icons.speed),
+                    _buildResultRow('Accuracy', '${_accuracy.toStringAsFixed(1)}%', Icons.track_changes),
+                    _buildResultRow('Time', _formatTime(_currentTime), Icons.access_time),
                     _buildResultRow('Errors', '$_errors', Icons.error_outline),
                   ],
                 ),
               ),
               const SizedBox(height: 12),
-
-              // Progress Bar
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -376,8 +288,6 @@ document.addEventListener('DOMContentLoaded', function() {
                   ),
                 ],
               ),
-
-              // Achievement Notification
               if (_accuracy == 100.0)
                 Container(
                   margin: const EdgeInsets.only(top: 12),
@@ -469,8 +379,15 @@ document.addEventListener('DOMContentLoaded', function() {
       _currentPosition = 0;
       _currentCharIndex = 0;
       _charStatus = List.filled(_totalCharacters, false);
+      _isManualScrolling = false;
+      _cachedSpans = null;
+      _lastPosition = null;
+      _lastCharStatus = null;
     });
     _typingController.clear();
+    _targetScrollController.jumpTo(0);
+    _typingScrollController.jumpTo(0);
+    _focusNode.requestFocus();
   }
 
   String _formatTime(int milliseconds) {
@@ -481,29 +398,27 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   List<TextSpan> _buildColoredText() {
-    List<TextSpan> spans = [];
+    if (_cachedSpans != null && _lastPosition == _currentPosition && _lastCharStatus == _charStatus) {
+      return _cachedSpans!;
+    }
 
+    List<TextSpan> spans = [];
     for (int i = 0; i < _targetCode.length; i++) {
       Color textColor;
       Color backgroundColor;
 
       if (i < _currentPosition) {
-        // Already typed
         if (_charStatus[i]) {
-          // Correct character
           textColor = Colors.green[700]!;
           backgroundColor = Colors.green[50]!;
         } else {
-          // Incorrect character
           textColor = Colors.red[700]!;
           backgroundColor = Colors.red[50]!;
         }
       } else if (i == _currentPosition) {
-        // Current position (cursor)
         textColor = Colors.white;
         backgroundColor = Theme.of(context).colorScheme.primary;
       } else {
-        // Not yet typed
         textColor = Colors.grey[600]!;
         backgroundColor = Colors.transparent;
       }
@@ -514,18 +429,18 @@ document.addEventListener('DOMContentLoaded', function() {
           style: TextStyle(
             color: textColor,
             backgroundColor: backgroundColor,
-            fontWeight: i == _currentPosition
-                ? FontWeight.bold
-                : FontWeight.normal,
+            fontWeight: i == _currentPosition ? FontWeight.bold : FontWeight.normal,
           ),
         ),
       );
     }
 
+    _cachedSpans = spans;
+    _lastPosition = _currentPosition;
+    _lastCharStatus = List.from(_charStatus);
     return spans;
   }
 
-  // Keyboard event handler
   void _onRawKey(RawKeyEvent event) {
     if (event is RawKeyDownEvent) {
       setState(() {
@@ -538,7 +453,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  // Map logical keys to characters, including additional symbols
   String? _mapLogicalKeyToChar(LogicalKeyboardKey key) {
     final keyLabel = key.keyLabel?.toLowerCase() ?? '';
     const symbolMap = {
@@ -574,101 +488,25 @@ document.addEventListener('DOMContentLoaded', function() {
     return symbolMap[keyLabel] ?? keyLabel;
   }
 
-  // Virtual Keyboard Widget
   Widget _buildVirtualKeyboard() {
-    // Define keyboard rows including numbers, symbols, shift, and tab
     final rows = [
-      // Number row
-      [
-        'tab',
-        '`',
-        '1',
-        '2',
-        '3',
-        '4',
-        '5',
-        '6',
-        '7',
-        '8',
-        '9',
-        '0',
-        '-',
-        '=',
-        '|',
-      ],
-      // Top row
+      ['tab', '`', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '|'],
       ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\\'],
-      // Home row
-      [
-        'shift',
-        'a',
-        's',
-        'd',
-        'f',
-        'g',
-        'h',
-        'j',
-        'k',
-        'l',
-        ';',
-        '\'',
-        '<',
-        '>',
-      ],
-      // Bottom row
+      ['shift', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '<', '>'],
       ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/'],
-      // Space bar
       ['space'],
     ];
 
-    // Determine the next keys to highlight (including Shift for uppercase and symbols)
     List<String> nextKeys = [];
+    bool needsShift = false;
+
     if (_currentPosition < _targetCode.length) {
       final nextChar = _targetCode[_currentPosition];
       final mappedKey = _mapCharToKeyboardKey(nextChar);
       nextKeys.add(mappedKey);
-      // If the next character is uppercase or a Shift-modified symbol, also highlight Shift
-      if ((nextChar.toUpperCase() != nextChar.toLowerCase() &&
-              nextChar == nextChar.toUpperCase()) ||
-          const [
-            '!',
-            '<',
-            '>',
-            '.',
-            '/',
-            '.',
-            ',',
-            ';',
-            ':',
-            '\'',
-            '[',
-            ']',
-            '\'',
-            '=',
-            '-',
-            '0',
-            '1',
-            '2',
-            '3',
-            '4',
-            '5',
-            '6',
-            '7',
-            '8',
-            '9',
-            '(',
-            ')',
-            '_',
-            '+',
-            ':',
-            '"',
-            '{',
-            '}',
-            '?',
-            '!',
-            '@',
-            '#'
-          ].contains(nextChar)) {
+      if (nextChar.toUpperCase() != nextChar.toLowerCase() && nextChar == nextChar.toUpperCase() ||
+          const ['!', '@', '#', '\$', '%', '^', '&', '*', '(', ')', '_', '+', '<', '>', ':', '"', '{', '}', '?', '~', '|'].contains(nextChar)) {
+        needsShift = true;
         nextKeys.add('shift');
       }
     }
@@ -687,7 +525,7 @@ document.addEventListener('DOMContentLoaded', function() {
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: row.map((key) {
-              final isHome = ['shift','a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '<', '>'].contains(key);
+              final isHome = ['shift', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '<', '>'].contains(key);
               final isActive = _currentKey == key;
               final isNext = nextKeys.contains(key) && !isActive;
               final isSpace = key == 'space';
@@ -695,68 +533,78 @@ document.addEventListener('DOMContentLoaded', function() {
               final isTab = key == 'tab';
 
               return AnimatedContainer(
-                duration: const Duration(milliseconds: 120),
+                duration: const Duration(milliseconds: 150),
                 margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
                 padding: EdgeInsets.symmetric(
-                  horizontal: isSpace
-                      ? 40
-                      : (isShift || isTab)
-                      ? 20
-                      : 12,
+                  horizontal: isSpace ? 40 : (isShift || isTab) ? 20 : 12,
                   vertical: isSpace ? 8 : 10,
                 ),
                 decoration: BoxDecoration(
+                color: isActive
+                    ? Colors.orange[600]
+                    : isNext
+                        ? Colors.blue[400]
+                        : isHome && _showHomeRow
+                            ? Colors.orange[100]
+                            : Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
                   color: isActive
-                      ? Colors.orange
+                      ? Colors.orange[800]!
                       : isNext
-                      ? Colors.blue[100]
-                      : isHome && _showHomeRow
-                      ? Colors.orange[100]
-                      : Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: isActive
-                        ? Colors.orange[700]!
-                        : isNext
-                        ? Colors.blue[700]!
-                        : isHome && _showHomeRow
-                        ? Colors.orange
-                        : Colors.grey[300]!,
-                    width: isActive || isNext ? 2 : 1,
-                  ),
-                  boxShadow: isActive || isNext
-                      ? [
-                          BoxShadow(
-                            color: (isActive ? Colors.orange : Colors.blue)
-                                .withOpacity(0.18),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ]
-                      : [],
+                          ? Colors.blue[800]!
+                          : isHome && _showHomeRow
+                              ? Colors.orange[400]!
+                              : Colors.grey[300]!,
+                  width: isActive || isNext ? 3 : 1,
                 ),
-                child: Text(
-                  isSpace
-                      ? 'Space'
-                      : (isShift
+                boxShadow: isNext
+                    ? [
+                        BoxShadow(
+                          color: Colors.blue[600]!.withOpacity(0.4),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3),
+                        ),
+                      ]
+                    : isActive
+                        ? [
+                            BoxShadow(
+                              color: Colors.orange[600]!.withOpacity(0.4),
+                              blurRadius: 10,
+                              offset: const Offset(0, 3),
+                            ),
+                          ]
+                        : [],
+              ),
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 1.0, end: isNext ? 1.08 : 1.0).animate(
+                    CurvedAnimation(
+                      parent: AnimationController(
+                        duration: const Duration(milliseconds: 500),
+                        vsync: this,
+                      )..repeat(reverse: true),
+                      curve: Curves.easeInOut,
+                    ),
+                  ),
+                  child: Text(
+                    isSpace
+                        ? 'Space'
+                        : isShift
                             ? 'Shift'
-                            : (isTab ? 'Tab' : key.toUpperCase())),
-                  style: TextStyle(
-                    color: isActive
-                        ? Colors.white
-                        : isNext
-                        ? Colors.blue[800]
-                        : isHome && _showHomeRow
-                        ? Colors.orange[800]
-                        : Colors.grey[800],
-                    fontWeight: isActive || isNext
-                        ? FontWeight.bold
-                        : FontWeight.normal,
-                    fontSize: isSpace
-                        ? 16
-                        : (isShift || isTab)
-                        ? 14
-                        : 18,
+                            : isTab
+                                ? 'Tab'
+                                : key.toUpperCase(),
+                    style: TextStyle(
+                      color: isActive
+                          ? Colors.white
+                          : isNext
+                              ? Colors.white
+                              : isHome && _showHomeRow
+                                  ? Colors.orange[800]
+                                  : Colors.grey[800],
+                      fontWeight: isActive || isNext ? FontWeight.bold : FontWeight.normal,
+                      fontSize: isSpace ? 16 : (isShift || isTab) ? 14 : 18,
+                    ),
                   ),
                 ),
               );
@@ -767,7 +615,6 @@ document.addEventListener('DOMContentLoaded', function() {
     );
   }
 
-  // Map target character to keyboard key
   String _mapCharToKeyboardKey(String char) {
     const charToKeyMap = {
       ' ': 'space',
@@ -786,33 +633,56 @@ document.addEventListener('DOMContentLoaded', function() {
       '>': 'greater than',
       '|': 'vertical line',
       '\t': 'tab',
-      '!': '1', // Shift + 1
-      '@': '2', // Shift + 2
-      '#': '3', // Shift + 3
-      '%': '5', // Shift + 5
-      '^': '6', // Shift + 6
-      '&': '7', // Shift + 7
-      '*': '8', // Shift + 8
-      '(': '9', // Shift + 9
-      ')': '0', // Shift + 0
-      '_': 'minus', // Shift + -
-      '+': 'equal', // Shift + =
-      ':': 'semicolon', // Shift + ;
-      '"': 'quote', // Shift + '
-      '{': 'open bracket', // Shift + [
-      '}': 'close bracket', // Shift + ]
-      '?': 'slash', // Shift + /
+      '!': '1',
+      '@': '2',
+      '#': '3',
+      '\$': '4',
+      '%': '5',
+      '^': '6',
+      '&': '7',
+      '*': '8',
+      '(': '9',
+      ')': '0',
+      '_': 'minus',
+      '+': 'equal',
+      ':': 'semicolon',
+      '"': 'quote',
+      '{': 'open bracket',
+      '}': 'close bracket',
+      '?': 'slash',
+      '~': 'backquote',
+      'A': 'a',
+      'B': 'b',
+      'C': 'c',
+      'D': 'd',
+      'E': 'e',
+      'F': 'f',
+      'G': 'g',
+      'H': 'h',
+      'I': 'i',
+      'J': 'j',
+      'K': 'k',
+      'L': 'l',
+      'M': 'm',
+      'N': 'n',
+      'O': 'o',
+      'P': 'p',
+      'Q': 'q',
+      'R': 'r',
+      'S': 's',
+      'T': 't',
+      'U': 'u',
+      'V': 'v',
+      'W': 'w',
+      'X': 'x',
+      'Y': 'y',
+      'Z': 'z',
     };
-    // For uppercase letters, return the lowercase key
-    if (char.toUpperCase() != char.toLowerCase() &&
-        char == char.toUpperCase()) {
-      return char.toLowerCase();
-    }
+
     return charToKeyMap[char] ?? char.toLowerCase();
   }
 
   void _startPractice() {
-    // Reset state and start timer
     setState(() {
       _isStarted = true;
       _isCompleted = false;
@@ -825,8 +695,14 @@ document.addEventListener('DOMContentLoaded', function() {
       _currentPosition = 0;
       _currentCharIndex = 0;
       _charStatus = List.filled(_totalCharacters, false);
+      _isManualScrolling = false;
+      _cachedSpans = null;
+      _lastPosition = null;
+      _lastCharStatus = null;
     });
     _typingController.clear();
+    _targetScrollController.jumpTo(0);
+    _typingScrollController.jumpTo(0);
     _focusNode.requestFocus();
     _updateTimer();
   }
@@ -869,19 +745,13 @@ document.addEventListener('DOMContentLoaded', function() {
           children: [
             Image.asset('assets/logo.png', height: 36),
             const SizedBox(width: 10),
-            Icon(
-              Icons.keyboard_alt_rounded,
-              color: Colors.orange[700],
-              size: 32,
-            ),
-            const SizedBox(width: 10),
             Text(
               'YHA Computer',
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                color: Colors.orange[800],
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-              ),
+                    color: Colors.orange[800],
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.2,
+                  ),
             ),
           ],
         ),
@@ -895,7 +765,6 @@ document.addEventListener('DOMContentLoaded', function() {
       ),
       body: Column(
         children: [
-          // Progress Bar
           Container(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -906,57 +775,39 @@ document.addEventListener('DOMContentLoaded', function() {
                     Text(
                       'Lesson $_selectedLesson - $_selectedLanguage',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange[800],
-                        fontSize: 22,
-                      ),
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange[800],
+                            fontSize: 22,
+                          ),
                     ),
                     Text(
-                      '${_currentPosition}/${_totalCharacters}',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
+                      '${_currentPosition}/$_totalCharacters',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
                     ),
                   ],
                 ),
                 const SizedBox(height: 6),
                 LinearProgressIndicator(
-                  value: _totalCharacters > 0
-                      ? _currentPosition / _totalCharacters
-                      : 0,
+                  value: _totalCharacters > 0 ? _currentPosition / _totalCharacters : 0,
                   backgroundColor: Colors.grey[200],
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    Theme.of(context).colorScheme.primary,
-                  ),
+                  valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
                 ),
               ],
             ),
           ),
-
-          // Metrics Bar
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             color: Colors.orange[100],
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildMetric(
-                  'Time',
-                  _formatTime(_currentTime),
-                  Icons.access_time,
-                ),
+                _buildMetric('Time', _formatTime(_currentTime), Icons.access_time),
                 _buildMetric('WPM', _wpm.toStringAsFixed(1), Icons.speed),
-                _buildMetric(
-                  'Accuracy',
-                  '${_accuracy.toStringAsFixed(1)}%',
-                  Icons.track_changes,
-                ),
+                _buildMetric('Accuracy', '${_accuracy.toStringAsFixed(1)}%', Icons.track_changes),
                 _buildMetric('Errors', '$_errors', Icons.error_outline),
               ],
             ),
           ),
-
-          // Main Content
           Expanded(
             child: Container(
               margin: const EdgeInsets.all(16),
@@ -973,7 +824,6 @@ document.addEventListener('DOMContentLoaded', function() {
               ),
               child: Row(
                 children: [
-                  // Target Code Display
                   Expanded(
                     flex: 1,
                     child: Container(
@@ -998,11 +848,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             ),
                             child: Row(
                               children: [
-                                Icon(
-                                  Icons.code,
-                                  size: 18,
-                                  color: Colors.orange,
-                                ),
+                                Icon(Icons.code, size: 18, color: Colors.orange[800]),
                                 const SizedBox(width: 8),
                                 Text(
                                   'Target Code',
@@ -1014,10 +860,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 ),
                                 const Spacer(),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                   decoration: BoxDecoration(
                                     color: Colors.blue[100],
                                     borderRadius: BorderRadius.circular(12),
@@ -1036,13 +879,15 @@ document.addEventListener('DOMContentLoaded', function() {
                           ),
                           Expanded(
                             child: SingleChildScrollView(
+                              controller: _targetScrollController,
                               padding: const EdgeInsets.all(16),
-                              child: RichText(
-                                text: TextSpan(
+                              child: SelectableText.rich(
+                                TextSpan(
                                   style: const TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 18,
-                                    color: Colors.black,
+                                    fontFamily: 'RobotoMono',
+                                    fontSize: 16,
+                                    height: 1.5,
+                                    color: Colors.black87,
                                   ),
                                   children: _buildColoredText(),
                                 ),
@@ -1053,7 +898,6 @@ document.addEventListener('DOMContentLoaded', function() {
                       ),
                     ),
                   ),
-                  // Typing Area
                   Expanded(
                     flex: 1,
                     child: Column(
@@ -1069,7 +913,7 @@ document.addEventListener('DOMContentLoaded', function() {
                           ),
                           child: Row(
                             children: [
-                              Icon(Icons.edit, size: 18, color: Colors.orange),
+                              Icon(Icons.edit, size: 18, color: Colors.orange[800]),
                               const SizedBox(width: 8),
                               Text(
                                 'Your Code',
@@ -1081,10 +925,7 @@ document.addEventListener('DOMContentLoaded', function() {
                               ),
                               const Spacer(),
                               Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
                                   color: Theme.of(context).colorScheme.primary,
                                   borderRadius: BorderRadius.circular(12),
@@ -1102,20 +943,22 @@ document.addEventListener('DOMContentLoaded', function() {
                           ),
                         ),
                         Expanded(
-                          child: Padding(
+                          child: SingleChildScrollView(
+                            controller: _typingScrollController,
                             padding: const EdgeInsets.all(16),
                             child: TextField(
                               controller: _typingController,
                               focusNode: _focusNode,
                               maxLines: null,
-                              expands: true,
                               style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 18,
+                                fontFamily: 'RobotoMono',
+                                fontSize: 16,
+                                height: 1.5,
                               ),
                               decoration: const InputDecoration(
                                 border: InputBorder.none,
                                 hintText: 'Start typing here...',
+                                hintStyle: TextStyle(color: Colors.grey),
                               ),
                             ),
                           ),
@@ -1127,8 +970,6 @@ document.addEventListener('DOMContentLoaded', function() {
               ),
             ),
           ),
-
-          // Virtual Keyboard Overlay
           _buildVirtualKeyboard(),
         ],
       ),
@@ -1140,5 +981,34 @@ document.addEventListener('DOMContentLoaded', function() {
         foregroundColor: Colors.white,
       ),
     );
+  }
+}
+
+// Placeholder for PracticeSession and StatisticsService
+class PracticeSession {
+  final String language;
+  final int lessonId;
+  final double wpm;
+  final double accuracy;
+  final int duration;
+  final int errors;
+  final DateTime completedAt;
+  final bool isPerfect;
+
+  PracticeSession({
+    required this.language,
+    required this.lessonId,
+    required this.wpm,
+    required this.accuracy,
+    required this.duration,
+    required this.errors,
+    required this.completedAt,
+    required this.isPerfect,
+  });
+}
+
+class StatisticsService {
+  static void updateStatistics(PracticeSession session) {
+    // Implement statistics update logic
   }
 }
