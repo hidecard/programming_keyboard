@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
+import 'dart:developer' as developer;
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PracticePage extends StatefulWidget {
   const PracticePage({super.key});
@@ -20,6 +23,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   bool _isManualScrolling = false;
   Timer? _scrollDebounceTimer;
   Timer? _textChangeDebounceTimer;
+  late AnimationController _keyboardAnimationController;
 
   // State variables
   String? _currentKey;
@@ -36,16 +40,19 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   int _currentPosition = 0;
   int _currentCharIndex = 0;
   List<bool> _charStatus = [];
-  List<TextSpan>? _cachedSpans;
+  List<TextSpan> _cachedSpans = [];
   int? _lastPosition;
   List<bool>? _lastCharStatus;
 
   @override
   void initState() {
     super.initState();
+    _keyboardAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    )..repeat(reverse: true);
     _typingController.addListener(_onTextChanged);
     _focusNode.addListener(_onFocusChange);
-
     FocusManager.instance.primaryFocus?.unfocus();
     RawKeyboard.instance.addListener(_onRawKey);
 
@@ -58,6 +65,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
       if (args != null) {
         setState(() {
@@ -67,12 +75,13 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
           _totalCharacters = _targetCode.length;
           _charStatus = List.filled(_totalCharacters, false);
         });
+        _startPractice();
       }
     });
   }
 
   void _onFocusChange() {
-    if (_focusNode.hasFocus) {
+    if (_focusNode.hasFocus && !_isCompleted) {
       _autoScrollToCurrentPosition();
     }
   }
@@ -81,6 +90,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   void dispose() {
     _textChangeDebounceTimer?.cancel();
     _scrollDebounceTimer?.cancel();
+    _keyboardAnimationController.dispose();
     RawKeyboard.instance.removeListener(_onRawKey);
     _typingController.removeListener(_onTextChanged);
     _focusNode.removeListener(_onFocusChange);
@@ -92,37 +102,53 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   }
 
   void _onTextChanged() {
-    _textChangeDebounceTimer?.cancel();
-    _textChangeDebounceTimer = Timer(const Duration(milliseconds: 50), () {
-      if (!_isStarted && _targetCode.isNotEmpty) {
-        _startTimer();
-      }
+    try {
+      _textChangeDebounceTimer?.cancel();
+      _textChangeDebounceTimer = Timer(const Duration(milliseconds: 50), () {
+        if (_isCompleted || !mounted) return;
 
-      final typedText = _typingController.text;
-      _correctCharacters = 0;
-      _errors = 0;
-      _currentPosition = typedText.length;
-      _currentCharIndex = typedText.length;
-
-      for (int i = 0; i < typedText.length && i < _targetCode.length; i++) {
-        bool isCorrect = typedText[i] == _targetCode[i];
-        _charStatus[i] = isCorrect;
-        if (isCorrect) {
-          _correctCharacters++;
-        } else {
-          _errors++;
+        if (!_isStarted && _targetCode.isNotEmpty) {
+          _startTimer();
         }
-      }
 
-      _calculateMetrics();
-      _autoScrollToCurrentPosition();
+        final typedText = _typingController.text;
+        _currentPosition = typedText.length.clamp(0, typedText.length);
+        _currentCharIndex = _currentPosition;
 
-      if (typedText.length >= _targetCode.length && _targetCode.isNotEmpty) {
-        _completePractice();
-      }
+        if (_charStatus.length != _targetCode.length) {
+          _charStatus = List.filled(_targetCode.length, false);
+        }
 
-      setState(() {});
-    });
+        int newCorrectCharacters = 0;
+        int newErrors = 0;
+        for (int i = 0; i < typedText.length && i < _targetCode.length; i++) {
+          bool isCorrect = typedText[i] == _targetCode[i];
+          _charStatus[i] = isCorrect;
+          if (isCorrect) {
+            newCorrectCharacters++;
+          } else {
+            newErrors++;
+          }
+        }
+
+        if (newCorrectCharacters != _correctCharacters ||
+            newErrors != _errors ||
+            typedText.length >= _targetCode.length) {
+          setState(() {
+            _correctCharacters = newCorrectCharacters;
+            _errors = newErrors;
+          });
+          _calculateMetrics();
+          _autoScrollToCurrentPosition();
+
+          if (typedText.length >= _targetCode.length && _targetCode.isNotEmpty) {
+            _completePractice();
+          }
+        }
+      });
+    } catch (e, stackTrace) {
+      developer.log('Error in _onTextChanged: $e', error: e, stackTrace: stackTrace);
+    }
   }
 
   void _startTimer() {
@@ -148,10 +174,9 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
 
   void _calculateMetrics() {
     final elapsedMinutes = _currentTime / 60000;
-    final typedWords = _typingController.text.split(' ').length;
-
+    final cpm = elapsedMinutes > 0 ? _correctCharacters / elapsedMinutes : 0;
     setState(() {
-      _wpm = elapsedMinutes > 0 ? typedWords / elapsedMinutes : 0;
+      _wpm = cpm / 5;
       _accuracy = _totalCharacters > 0
           ? (_correctCharacters / _totalCharacters) * 100
           : 0;
@@ -163,7 +188,21 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
 
     _scrollDebounceTimer?.cancel();
     _scrollDebounceTimer = Timer(const Duration(milliseconds: 100), () {
-      final textBeforeCursor = _typingController.text.substring(0, _currentPosition);
+      if (!mounted) return;
+
+      final textLength = _typingController.text.length;
+      if (_currentPosition > textLength || _currentPosition < 0) {
+        developer.log(
+          'Invalid _currentPosition: $_currentPosition, textLength: $textLength',
+          name: 'PracticePage',
+        );
+        return;
+      }
+
+      final textBeforeCursor = textLength > 0
+          ? _typingController.text.substring(0, _currentPosition)
+          : '';
+
       final textSpan = TextSpan(
         text: textBeforeCursor,
         style: const TextStyle(
@@ -177,7 +216,11 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
         text: textSpan,
         textDirection: TextDirection.ltr,
         maxLines: null,
-      )..layout(maxWidth: MediaQuery.of(context).size.width / 2);
+      )..layout(
+          maxWidth: _targetScrollController.hasClients
+              ? _targetScrollController.position.viewportDimension - 16 // Reduced padding
+              : MediaQuery.of(context).size.width * 0.45, // Increased width
+        );
 
       final caretOffset = textPainter.getOffsetForCaret(
         TextPosition(offset: _currentPosition),
@@ -232,7 +275,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            Icon(Icons.celebration, color: Colors.orange, size: 24),
+            const Icon(Icons.celebration, color: Colors.orange, size: 24),
             const SizedBox(width: 8),
             const Text('Lesson Completed! 🎉'),
           ],
@@ -271,7 +314,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
+                  const Text(
                     'Progress',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                   ),
@@ -279,7 +322,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                   LinearProgressIndicator(
                     value: 1.0,
                     backgroundColor: Colors.grey[200],
-                    valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.green),
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -299,7 +342,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.star, color: Colors.purple, size: 16),
+                      const Icon(Icons.star, color: Colors.purple, size: 16),
                       const SizedBox(width: 8),
                       Text(
                         'Perfect Lesson!',
@@ -380,14 +423,21 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
       _currentCharIndex = 0;
       _charStatus = List.filled(_totalCharacters, false);
       _isManualScrolling = false;
-      _cachedSpans = null;
+      _cachedSpans = [];
       _lastPosition = null;
       _lastCharStatus = null;
     });
     _typingController.clear();
-    _targetScrollController.jumpTo(0);
-    _typingScrollController.jumpTo(0);
-    _focusNode.requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_targetScrollController.hasClients) {
+        _targetScrollController.jumpTo(0);
+      }
+      if (_typingScrollController.hasClients) {
+        _typingScrollController.jumpTo(0);
+      }
+      _focusNode.requestFocus();
+      _startPractice();
+    });
   }
 
   String _formatTime(int milliseconds) {
@@ -398,51 +448,81 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   }
 
   List<TextSpan> _buildColoredText() {
-    if (_cachedSpans != null && _lastPosition == _currentPosition && _lastCharStatus == _charStatus) {
-      return _cachedSpans!;
+    if (_cachedSpans.isNotEmpty &&
+        _lastPosition == _currentPosition &&
+        _lastCharStatus != null &&
+        _lastCharStatus!.length == _charStatus.length &&
+        _lastCharStatus!.asMap().entries.every((e) => e.value == _charStatus[e.key])) {
+      return _cachedSpans;
     }
 
     List<TextSpan> spans = [];
+    String currentText = '';
+    Color? currentColor;
+    Color? currentBackground;
+    FontWeight? currentWeight;
+
     for (int i = 0; i < _targetCode.length; i++) {
       Color textColor;
       Color backgroundColor;
+      FontWeight fontWeight;
 
       if (i < _currentPosition) {
-        if (_charStatus[i]) {
-          textColor = Colors.green[700]!;
-          backgroundColor = Colors.green[50]!;
-        } else {
-          textColor = Colors.red[700]!;
-          backgroundColor = Colors.red[50]!;
-        }
+        textColor = _charStatus[i] ? Colors.green[700]! : Colors.red[700]!;
+        backgroundColor = _charStatus[i] ? Colors.green[50]! : Colors.red[50]!;
+        fontWeight = FontWeight.normal;
       } else if (i == _currentPosition) {
         textColor = Colors.white;
         backgroundColor = Theme.of(context).colorScheme.primary;
+        fontWeight = FontWeight.bold;
       } else {
         textColor = Colors.grey[600]!;
         backgroundColor = Colors.transparent;
+        fontWeight = FontWeight.normal;
       }
 
-      spans.add(
-        TextSpan(
-          text: _targetCode[i],
-          style: TextStyle(
-            color: textColor,
-            backgroundColor: backgroundColor,
-            fontWeight: i == _currentPosition ? FontWeight.bold : FontWeight.normal,
-          ),
+      if (textColor != currentColor || backgroundColor != currentBackground || fontWeight != currentWeight) {
+        if (currentText.isNotEmpty) {
+          spans.add(TextSpan(
+            text: currentText,
+            style: TextStyle(
+              color: currentColor,
+              backgroundColor: currentBackground,
+              fontWeight: currentWeight,
+            ),
+          ));
+          currentText = '';
+        }
+        currentColor = textColor;
+        currentBackground = backgroundColor;
+        currentWeight = fontWeight;
+      }
+      currentText += _targetCode[i];
+    }
+
+    if (currentText.isNotEmpty) {
+      spans.add(TextSpan(
+        text: currentText,
+        style: TextStyle(
+          color: currentColor,
+          backgroundColor: currentBackground,
+          fontWeight: currentWeight,
         ),
-      );
+      ));
     }
 
     _cachedSpans = spans;
     _lastPosition = _currentPosition;
-    _lastCharStatus = List.from(_charStatus);
+    _lastCharStatus = List.of(_charStatus);
     return spans;
   }
 
   void _onRawKey(RawKeyEvent event) {
     if (event is RawKeyDownEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.backspace ||
+          event.logicalKey == LogicalKeyboardKey.enter) {
+        return;
+      }
       setState(() {
         _currentKey = _mapLogicalKeyToChar(event.logicalKey);
       });
@@ -504,10 +584,12 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
       final nextChar = _targetCode[_currentPosition];
       final mappedKey = _mapCharToKeyboardKey(nextChar);
       nextKeys.add(mappedKey);
-      if (nextChar.toUpperCase() != nextChar.toLowerCase() && nextChar == nextChar.toUpperCase() ||
-          const ['!', '@', '#', '\$', '%', '^', '&', '*', '(', ')', '_', '+', '<', '>', ':', '"', '{', '}', '?', '~', '|'].contains(nextChar)) {
+      const shiftSymbols = ['!', '@', '#', '\$', '%', '^', '&', '*', '(', ')', '_', '+', ':', '"', '{', '}', '?', '~', '|', '<', '>'];
+      if (nextChar.toUpperCase() != nextChar.toLowerCase() && nextChar == nextChar.toUpperCase() || shiftSymbols.contains(nextChar)) {
         needsShift = true;
-        nextKeys.add('shift');
+        if (!nextKeys.contains('shift')) {
+          nextKeys.add('shift');
+        }
       }
     }
 
@@ -540,49 +622,46 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                   vertical: isSpace ? 8 : 10,
                 ),
                 decoration: BoxDecoration(
-                color: isActive
-                    ? Colors.orange[600]
-                    : isNext
-                        ? Colors.blue[400]
-                        : isHome && _showHomeRow
-                            ? Colors.orange[100]
-                            : Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
                   color: isActive
-                      ? Colors.orange[800]!
+                      ? Colors.orange[600]
                       : isNext
-                          ? Colors.blue[800]!
+                          ? Colors.blue[500]
                           : isHome && _showHomeRow
-                              ? Colors.orange[400]!
-                              : Colors.grey[300]!,
-                  width: isActive || isNext ? 3 : 1,
+                              ? Colors.orange[100]
+                              : Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isActive
+                        ? Colors.orange[800]!
+                        : isNext
+                            ? Colors.blue[900]!
+                            : isHome && _showHomeRow
+                                ? Colors.orange[400]!
+                                : Colors.grey[300]!,
+                    width: isActive || isNext ? 3 : 1,
+                  ),
+                  boxShadow: isNext
+                      ? [
+                          BoxShadow(
+                            color: Colors.blue[700]!.withOpacity(0.5),
+                            blurRadius: 12,
+                            offset: const Offset(0, 3),
+                          ),
+                        ]
+                      : isActive
+                          ? [
+                              BoxShadow(
+                                color: Colors.orange[600]!.withOpacity(0.4),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              ),
+                            ]
+                          : [],
                 ),
-                boxShadow: isNext
-                    ? [
-                        BoxShadow(
-                          color: Colors.blue[600]!.withOpacity(0.4),
-                          blurRadius: 10,
-                          offset: const Offset(0, 3),
-                        ),
-                      ]
-                    : isActive
-                        ? [
-                            BoxShadow(
-                              color: Colors.orange[600]!.withOpacity(0.4),
-                              blurRadius: 10,
-                              offset: const Offset(0, 3),
-                            ),
-                          ]
-                        : [],
-              ),
                 child: ScaleTransition(
-                  scale: Tween<double>(begin: 1.0, end: isNext ? 1.08 : 1.0).animate(
+                  scale: Tween<double>(begin: 1.0, end: isNext ? 1.10 : 1.0).animate(
                     CurvedAnimation(
-                      parent: AnimationController(
-                        duration: const Duration(milliseconds: 500),
-                        vsync: this,
-                      )..repeat(reverse: true),
+                      parent: _keyboardAnimationController,
                       curve: Curves.easeInOut,
                     ),
                   ),
@@ -605,6 +684,13 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                       fontWeight: isActive || isNext ? FontWeight.bold : FontWeight.normal,
                       fontSize: isSpace ? 16 : (isShift || isTab) ? 14 : 18,
                     ),
+                    semanticsLabel: isSpace
+                        ? 'Space key'
+                        : isShift
+                            ? 'Shift key'
+                            : isTab
+                                ? 'Tab key'
+                                : key,
                   ),
                 ),
               );
@@ -679,10 +765,13 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
       'Z': 'z',
     };
 
-    return charToKeyMap[char] ?? char.toLowerCase();
+    final mappedKey = charToKeyMap[char] ?? char.toLowerCase();
+    developer.log('Mapping char: $char to key: $mappedKey', name: 'PracticePage');
+    return mappedKey;
   }
 
   void _startPractice() {
+    if (_targetCode.isEmpty) return;
     setState(() {
       _isStarted = true;
       _isCompleted = false;
@@ -696,15 +785,21 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
       _currentCharIndex = 0;
       _charStatus = List.filled(_totalCharacters, false);
       _isManualScrolling = false;
-      _cachedSpans = null;
+      _cachedSpans = [];
       _lastPosition = null;
       _lastCharStatus = null;
     });
     _typingController.clear();
-    _targetScrollController.jumpTo(0);
-    _typingScrollController.jumpTo(0);
-    _focusNode.requestFocus();
-    _updateTimer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_targetScrollController.hasClients) {
+        _targetScrollController.jumpTo(0);
+      }
+      if (_typingScrollController.hasClients) {
+        _typingScrollController.jumpTo(0);
+      }
+      _focusNode.requestFocus();
+      _updateTimer();
+    });
   }
 
   Widget _buildMetric(String label, String value, IconData icon) {
@@ -763,228 +858,233 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            child: Column(
+      body: _targetCode.isEmpty
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Lesson $_selectedLesson - $_selectedLanguage',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.orange[800],
-                            fontSize: 22,
-                          ),
-                    ),
-                    Text(
-                      '${_currentPosition}/$_totalCharacters',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                LinearProgressIndicator(
-                  value: _totalCharacters > 0 ? _currentPosition / _totalCharacters : 0,
-                  backgroundColor: Colors.grey[200],
-                  valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            color: Colors.orange[100],
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildMetric('Time', _formatTime(_currentTime), Icons.access_time),
-                _buildMetric('WPM', _wpm.toStringAsFixed(1), Icons.speed),
-                _buildMetric('Accuracy', '${_accuracy.toStringAsFixed(1)}%', Icons.track_changes),
-                _buildMetric('Errors', '$_errors', Icons.error_outline),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Container(
-              margin: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.orange.withOpacity(0.08),
-                    blurRadius: 12,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    flex: 1,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          right: BorderSide(
-                            color: Colors.orange[100]!,
-                            width: 2,
-                          ),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.all(12),
+                          Text(
+                            'Lesson $_selectedLesson - $_selectedLanguage',
+                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.orange[800],
+                                  fontSize: 22,
+                                ),
+                          ),
+                          Text(
+                            '${_currentPosition}/$_totalCharacters',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      LinearProgressIndicator(
+                        value: _totalCharacters > 0 ? _currentPosition / _totalCharacters : 0,
+                        backgroundColor: Colors.grey[200],
+                        valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  color: Colors.orange[100],
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildMetric('Time', _formatTime(_currentTime), Icons.access_time),
+                      _buildMetric('WPM', _wpm.toStringAsFixed(1), Icons.speed),
+                      _buildMetric('Accuracy', '${_accuracy.toStringAsFixed(1)}%', Icons.track_changes),
+                      _buildMetric('Errors', '$_errors', Icons.error_outline),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Container(
+                    margin: const EdgeInsets.all(8), // Reduced margin
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.orange.withOpacity(0.08),
+                          blurRadius: 12,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Flexible(
+                          flex: 1,
+                          fit: FlexFit.tight,
+                          child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.orange[50],
-                              borderRadius: const BorderRadius.only(
-                                topLeft: Radius.circular(18),
+                              border: Border(
+                                right: BorderSide(
+                                  color: Colors.orange[100]!,
+                                  width: 1, // Reduced border width
+                                ),
                               ),
                             ),
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(Icons.code, size: 18, color: Colors.orange[800]),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Target Code',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.orange[800],
-                                    fontSize: 16,
+                                Container(
+                                  padding: const EdgeInsets.all(8), // Reduced padding
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange[50],
+                                    borderRadius: const BorderRadius.only(
+                                      topLeft: Radius.circular(18),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.code, size: 18, color: Colors.orange[800]),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Target Code',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.orange[800],
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.blue[100],
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Text(
+                                          '$_currentPosition/$_totalCharacters',
+                                          style: TextStyle(
+                                            color: Colors.blue[700],
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const Spacer(),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: Colors.blue[100],
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Text(
-                                    '$_currentPosition/$_totalCharacters',
-                                    style: TextStyle(
-                                      color: Colors.blue[700],
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
+                                Expanded(
+                                  child: Scrollbar(
+                                    controller: _targetScrollController,
+                                    thumbVisibility: true,
+                                    child: SingleChildScrollView(
+                                      controller: _targetScrollController,
+                                      padding: const EdgeInsets.all(8), // Reduced padding
+                                      child: SelectableText.rich(
+                                        TextSpan(
+                                          style: const TextStyle(
+                                            fontFamily: 'RobotoMono',
+                                            fontSize: 16,
+                                            height: 1.5,
+                                            color: Colors.black87,
+                                          ),
+                                          children: _buildColoredText(),
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          Expanded(
-                            child: SingleChildScrollView(
-                              controller: _targetScrollController,
-                              padding: const EdgeInsets.all(16),
-                              child: SelectableText.rich(
-                                TextSpan(
-                                  style: const TextStyle(
-                                    fontFamily: 'RobotoMono',
-                                    fontSize: 16,
-                                    height: 1.5,
-                                    color: Colors.black87,
-                                  ),
-                                  children: _buildColoredText(),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    flex: 1,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.orange[50],
-                            borderRadius: const BorderRadius.only(
-                              topRight: Radius.circular(18),
-                            ),
-                          ),
-                          child: Row(
+                        ),
+                        Flexible(
+                          flex: 1,
+                          fit: FlexFit.tight,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(Icons.edit, size: 18, color: Colors.orange[800]),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Your Code',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.orange[800],
-                                  fontSize: 16,
+                              Container(
+                                padding: const EdgeInsets.all(8), // Reduced padding
+                                decoration: BoxDecoration(
+                                  color: Colors.orange[50],
+                                  borderRadius: const BorderRadius.only(
+                                    topRight: Radius.circular(18),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.edit, size: 18, color: Colors.orange[800]),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Your Code',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.orange[800],
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(context).colorScheme.primary,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        'Position: $_currentPosition',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              const Spacer(),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  'Position: $_currentPosition',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
+                              Expanded(
+                                child: Scrollbar(
+                                  controller: _typingScrollController,
+                                  thumbVisibility: true,
+                                  child: SingleChildScrollView(
+                                    controller: _typingScrollController,
+                                    padding: const EdgeInsets.all(8), // Reduced padding
+                                    child: TextField(
+                                      controller: _typingController,
+                                      focusNode: _focusNode,
+                                      maxLines: null,
+                                      enableInteractiveSelection: false,
+                                      style: const TextStyle(
+                                        fontFamily: 'RobotoMono',
+                                        fontSize: 16,
+                                        height: 1.5,
+                                      ),
+                                      decoration: const InputDecoration(
+                                        border: InputBorder.none,
+                                        hintText: 'Start typing here...',
+                                        hintStyle: TextStyle(color: Colors.grey),
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        Expanded(
-                          child: SingleChildScrollView(
-                            controller: _typingScrollController,
-                            padding: const EdgeInsets.all(16),
-                            child: TextField(
-                              controller: _typingController,
-                              focusNode: _focusNode,
-                              maxLines: null,
-                              style: const TextStyle(
-                                fontFamily: 'RobotoMono',
-                                fontSize: 16,
-                                height: 1.5,
-                              ),
-                              decoration: const InputDecoration(
-                                border: InputBorder.none,
-                                hintText: 'Start typing here...',
-                                hintStyle: TextStyle(color: Colors.grey),
-                              ),
-                            ),
-                          ),
-                        ),
                       ],
                     ),
                   ),
-                ],
-              ),
+                ),
+                _buildVirtualKeyboard(),
+              ],
             ),
-          ),
-          _buildVirtualKeyboard(),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _startPractice,
-        icon: const Icon(Icons.play_arrow),
-        label: const Text('Start Practice'),
-        backgroundColor: Colors.orange,
-        foregroundColor: Colors.white,
-      ),
     );
   }
 }
 
-// Placeholder for PracticeSession and StatisticsService
 class PracticeSession {
   final String language;
   final int lessonId;
@@ -1005,10 +1105,30 @@ class PracticeSession {
     required this.completedAt,
     required this.isPerfect,
   });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'language': language,
+      'lessonId': lessonId,
+      'wpm': wpm,
+      'accuracy': accuracy,
+      'duration': duration,
+      'errors': errors,
+      'completedAt': completedAt.toIso8601String(),
+      'isPerfect': isPerfect,
+    };
+  }
 }
 
 class StatisticsService {
-  static void updateStatistics(PracticeSession session) {
-    // Implement statistics update logic
+  static Future<void> updateStatistics(PracticeSession session) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      List<String> sessions = prefs.getStringList('sessions') ?? [];
+      sessions.add(jsonEncode(session.toJson()));
+      await prefs.setStringList('sessions', sessions);
+    } catch (e, stackTrace) {
+      developer.log('Error updating statistics: $e', error: e, stackTrace: stackTrace);
+    }
   }
 }
