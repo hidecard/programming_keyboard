@@ -71,7 +71,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
         setState(() {
           _selectedLanguage = args['language'] ?? 'HTML';
           _selectedLesson = args['lesson'] ?? 1;
-          _targetCode = args['typingText'] ?? '';
+          _targetCode = args['typingText'] ?? '// Start typing...';
           _totalCharacters = _targetCode.length;
           _charStatus = List.filled(_totalCharacters, false);
         });
@@ -112,8 +112,21 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
         }
 
         final typedText = _typingController.text;
-        _currentPosition = typedText.length.clamp(0, typedText.length);
+        if (_currentPosition > 0 && typedText.length > _currentPosition + 1) {
+          _typingController.text = typedText.substring(0, _currentPosition + 1);
+          return;
+        }
+
+        _currentPosition = typedText.length.clamp(0, _targetCode.length);
         _currentCharIndex = _currentPosition;
+
+        if (_currentPosition < _targetCode.length &&
+            typedText.endsWith('\n') &&
+            _targetCode[_currentPosition] != '\n') {
+          _typingController.text = typedText.substring(0, typedText.length - 1);
+          _currentPosition--;
+          return;
+        }
 
         if (_charStatus.length != _targetCode.length) {
           _charStatus = List.filled(_targetCode.length, false);
@@ -204,7 +217,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
           : '';
 
       final textSpan = TextSpan(
-        text: textBeforeCursor,
+        text: textBeforeCursor.replaceAll('\n', '⏎\n'),
         style: const TextStyle(
           fontFamily: 'RobotoMono',
           fontSize: 16,
@@ -215,11 +228,12 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
       final textPainter = TextPainter(
         text: textSpan,
         textDirection: TextDirection.ltr,
+        textAlign: TextAlign.left,
         maxLines: null,
       )..layout(
           maxWidth: _targetScrollController.hasClients
-              ? _targetScrollController.position.viewportDimension - 16 // Reduced padding
-              : MediaQuery.of(context).size.width * 0.45, // Increased width
+              ? _targetScrollController.position.viewportDimension - 16
+              : MediaQuery.of(context).size.width * 0.45,
         );
 
       final caretOffset = textPainter.getOffsetForCaret(
@@ -227,19 +241,27 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
         Rect.zero,
       );
 
-      final targetOffset = caretOffset.dy - (MediaQuery.of(context).size.height / 4);
+      final lineHeight = textPainter.preferredLineHeight;
+      final lineNumber = textBeforeCursor.split('\n').length - 1;
+      final targetOffset = caretOffset.dy + (lineNumber * lineHeight * 0.5) - (MediaQuery.of(context).size.height / 4);
 
       if (_targetScrollController.hasClients) {
+        final maxScroll = _targetScrollController.position.maxScrollExtent;
+        final newOffset = targetOffset.clamp(0.0, maxScroll > 0 ? maxScroll : 0.0);
+        developer.log('Target scroll to: $newOffset, caret: $caretOffset, line: $lineNumber', name: 'PracticePage');
         _targetScrollController.animateTo(
-          targetOffset.clamp(0.0, _targetScrollController.position.maxScrollExtent),
+          newOffset,
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutCubic,
         );
       }
 
       if (_typingScrollController.hasClients) {
+        final maxScroll = _typingScrollController.position.maxScrollExtent;
+        final newOffset = targetOffset.clamp(0.0, maxScroll > 0 ? maxScroll : 0.0);
+        developer.log('Typing scroll to: $newOffset, caret: $caretOffset, line: $lineNumber', name: 'PracticePage');
         _typingScrollController.animateTo(
-          targetOffset.clamp(0.0, _typingScrollController.position.maxScrollExtent),
+          newOffset,
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutCubic,
         );
@@ -497,7 +519,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
         currentBackground = backgroundColor;
         currentWeight = fontWeight;
       }
-      currentText += _targetCode[i];
+      currentText += _targetCode[i] == '\n' ? '⏎\n' : _targetCode[i];
     }
 
     if (currentText.isNotEmpty) {
@@ -519,8 +541,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
 
   void _onRawKey(RawKeyEvent event) {
     if (event is RawKeyDownEvent) {
-      if (event.logicalKey == LogicalKeyboardKey.backspace ||
-          event.logicalKey == LogicalKeyboardKey.enter) {
+      if (event.logicalKey == LogicalKeyboardKey.backspace) {
         return;
       }
       setState(() {
@@ -551,7 +572,8 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
       'greater than': '>',
       'vertical line': '|',
       'space': ' ',
-      'tab': 'tab',
+      'tab': '\t',
+      'enter': '\n',
       'shift left': 'shift',
       'shift right': 'shift',
       '1': '1',
@@ -572,7 +594,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
     final rows = [
       ['tab', '`', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '|'],
       ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\\'],
-      ['shift', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '<', '>'],
+      ['shift', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', 'enter'],
       ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/'],
       ['space'],
     ];
@@ -584,7 +606,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
       final nextChar = _targetCode[_currentPosition];
       final mappedKey = _mapCharToKeyboardKey(nextChar);
       nextKeys.add(mappedKey);
-      const shiftSymbols = ['!', '@', '#', '\$', '%', '^', '&', '*', '(', ')', '_', '+', ':', '"', '{', '}', '?', '~', '|', '<', '>'];
+      const shiftSymbols = ['!', '@', '#', '\$', '%', '^', '&', '*', '(', ')', '_', '+', ':', '"', '{', '}', '?', '~', '|'];
       if (nextChar.toUpperCase() != nextChar.toLowerCase() && nextChar == nextChar.toUpperCase() || shiftSymbols.contains(nextChar)) {
         needsShift = true;
         if (!nextKeys.contains('shift')) {
@@ -607,90 +629,98 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: row.map((key) {
-              final isHome = ['shift', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '<', '>'].contains(key);
+              final isHome = ['shift', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', 'enter'].contains(key);
               final isActive = _currentKey == key;
               final isNext = nextKeys.contains(key) && !isActive;
               final isSpace = key == 'space';
               final isShift = key == 'shift';
               final isTab = key == 'tab';
+              final isEnter = key == 'enter';
 
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
-                padding: EdgeInsets.symmetric(
-                  horizontal: isSpace ? 40 : (isShift || isTab) ? 20 : 12,
-                  vertical: isSpace ? 8 : 10,
-                ),
-                decoration: BoxDecoration(
-                  color: isActive
-                      ? Colors.orange[600]
-                      : isNext
-                          ? Colors.blue[500]
-                          : isHome && _showHomeRow
-                              ? Colors.orange[100]
-                              : Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
+              return Flexible(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isSpace ? 40 : (isShift || isTab) ? 20 : isEnter ? 24 : 12,
+                    vertical: isSpace ? 8 : isEnter ? 12 : 10,
+                  ),
+                  decoration: BoxDecoration(
                     color: isActive
-                        ? Colors.orange[800]!
+                        ? Colors.orange[600]
                         : isNext
-                            ? Colors.blue[900]!
+                            ? Colors.blue[600]
                             : isHome && _showHomeRow
-                                ? Colors.orange[400]!
-                                : Colors.grey[300]!,
-                    width: isActive || isNext ? 3 : 1,
-                  ),
-                  boxShadow: isNext
-                      ? [
-                          BoxShadow(
-                            color: Colors.blue[700]!.withOpacity(0.5),
-                            blurRadius: 12,
-                            offset: const Offset(0, 3),
-                          ),
-                        ]
-                      : isActive
-                          ? [
-                              BoxShadow(
-                                color: Colors.orange[600]!.withOpacity(0.4),
-                                blurRadius: 10,
-                                offset: const Offset(0, 3),
-                              ),
-                            ]
-                          : [],
-                ),
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 1.0, end: isNext ? 1.10 : 1.0).animate(
-                    CurvedAnimation(
-                      parent: _keyboardAnimationController,
-                      curve: Curves.easeInOut,
-                    ),
-                  ),
-                  child: Text(
-                    isSpace
-                        ? 'Space'
-                        : isShift
-                            ? 'Shift'
-                            : isTab
-                                ? 'Tab'
-                                : key.toUpperCase(),
-                    style: TextStyle(
+                                ? Colors.orange[100]
+                                : Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
                       color: isActive
-                          ? Colors.white
+                          ? Colors.orange[800]!
                           : isNext
-                              ? Colors.white
+                              ? Colors.blue[900]!
                               : isHome && _showHomeRow
-                                  ? Colors.orange[800]
-                                  : Colors.grey[800],
-                      fontWeight: isActive || isNext ? FontWeight.bold : FontWeight.normal,
-                      fontSize: isSpace ? 16 : (isShift || isTab) ? 14 : 18,
+                                  ? Colors.orange[400]!
+                                  : Colors.grey[300]!,
+                      width: isActive || isNext ? 3 : 1,
                     ),
-                    semanticsLabel: isSpace
-                        ? 'Space key'
-                        : isShift
-                            ? 'Shift key'
-                            : isTab
-                                ? 'Tab key'
-                                : key,
+                    boxShadow: isNext
+                        ? [
+                            BoxShadow(
+                              color: Colors.blue[700]!.withOpacity(0.5),
+                              blurRadius: 12,
+                              offset: const Offset(0, 3),
+                            ),
+                          ]
+                        : isActive
+                            ? [
+                                BoxShadow(
+                                  color: Colors.orange[600]!.withOpacity(0.4),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ]
+                            : [],
+                  ),
+                  child: ScaleTransition(
+                    scale: Tween<double>(begin: 1.0, end: isNext ? 1.15 : 1.0).animate(
+                      CurvedAnimation(
+                        parent: _keyboardAnimationController,
+                        curve: Curves.easeInOut,
+                      ),
+                    ),
+                    child: Text(
+                      isSpace
+                          ? 'Space'
+                          : isShift
+                              ? 'Shift'
+                              : isTab
+                                  ? 'Tab'
+                                  : isEnter
+                                      ? 'Enter'
+                                      : key.toUpperCase(),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: isActive
+                            ? Colors.white
+                            : isNext
+                                ? Colors.white
+                                : isHome && _showHomeRow
+                                    ? Colors.orange[800]
+                                    : Colors.grey[800],
+                        fontWeight: isActive || isNext ? FontWeight.bold : FontWeight.normal,
+                        fontSize: isSpace ? 16 : isEnter ? 16 : (isShift || isTab) ? 14 : 18,
+                      ),
+                      semanticsLabel: isSpace
+                          ? 'Space key'
+                          : isShift
+                              ? 'Shift key'
+                              : isTab
+                                  ? 'Tab key'
+                                  : isEnter
+                                      ? 'Enter key, press to insert a newline'
+                                      : 'Key $key, ${isNext ? 'next key to press' : 'not next'}',
+                    ),
                   ),
                 ),
               );
@@ -704,6 +734,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   String _mapCharToKeyboardKey(String char) {
     const charToKeyMap = {
       ' ': 'space',
+      '\n': 'enter',
       ';': 'semicolon',
       '=': 'equal',
       ',': 'comma',
@@ -771,7 +802,14 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   }
 
   void _startPractice() {
-    if (_targetCode.isEmpty) return;
+    if (_targetCode.isEmpty) {
+      developer.log('Target code is empty, using fallback', name: 'PracticePage');
+      setState(() {
+        _targetCode = '// Start typing...';
+        _totalCharacters = _targetCode.length;
+        _charStatus = List.filled(_totalCharacters, false);
+      });
+    }
     setState(() {
       _isStarted = true;
       _isCompleted = false;
@@ -907,7 +945,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                 ),
                 Expanded(
                   child: Container(
-                    margin: const EdgeInsets.all(8), // Reduced margin
+                    margin: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(18),
@@ -929,7 +967,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                               border: Border(
                                 right: BorderSide(
                                   color: Colors.orange[100]!,
-                                  width: 1, // Reduced border width
+                                  width: 1,
                                 ),
                               ),
                             ),
@@ -937,7 +975,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Container(
-                                  padding: const EdgeInsets.all(8), // Reduced padding
+                                  padding: const EdgeInsets.all(8),
                                   decoration: BoxDecoration(
                                     color: Colors.orange[50],
                                     borderRadius: const BorderRadius.only(
@@ -981,7 +1019,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                                     thumbVisibility: true,
                                     child: SingleChildScrollView(
                                       controller: _targetScrollController,
-                                      padding: const EdgeInsets.all(8), // Reduced padding
+                                      padding: const EdgeInsets.all(8),
                                       child: SelectableText.rich(
                                         TextSpan(
                                           style: const TextStyle(
@@ -1007,7 +1045,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Container(
-                                padding: const EdgeInsets.all(8), // Reduced padding
+                                padding: const EdgeInsets.all(8),
                                 decoration: BoxDecoration(
                                   color: Colors.orange[50],
                                   borderRadius: const BorderRadius.only(
@@ -1051,7 +1089,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
                                   thumbVisibility: true,
                                   child: SingleChildScrollView(
                                     controller: _typingScrollController,
-                                    padding: const EdgeInsets.all(8), // Reduced padding
+                                    padding: const EdgeInsets.all(8),
                                     child: TextField(
                                       controller: _typingController,
                                       focusNode: _focusNode,
