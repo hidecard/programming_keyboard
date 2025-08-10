@@ -29,6 +29,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   String? _currentKey;
   bool _showHomeRow = true;
   bool _isStarted = false;
+  bool _isPaused = false;
   bool _isCompleted = false;
   int _startTime = 0;
   int _currentTime = 0;
@@ -50,7 +51,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
     _keyboardAnimationController = AnimationController(
       duration: const Duration(milliseconds: 400),
       vsync: this,
-    )..repeat(reverse: true);
+    );
     _typingController.addListener(_onTextChanged);
     _focusNode.addListener(_onFocusChange);
     FocusManager.instance.primaryFocus?.unfocus();
@@ -67,7 +68,15 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
-      if (args != null) {
+      if (args == null || args['typingText'] == null) {
+        setState(() {
+          _targetCode = '// Start typing...';
+          _selectedLanguage = 'HTML';
+          _selectedLesson = 1;
+          _totalCharacters = _targetCode.length;
+          _charStatus = List.filled(_totalCharacters, false);
+        });
+      } else {
         setState(() {
           _selectedLanguage = args['language'] ?? 'HTML';
           _selectedLesson = args['lesson'] ?? 1;
@@ -75,14 +84,19 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
           _totalCharacters = _targetCode.length;
           _charStatus = List.filled(_totalCharacters, false);
         });
-        _startPractice();
       }
+      _startPractice();
     });
   }
 
   void _onFocusChange() {
-    if (_focusNode.hasFocus && !_isCompleted) {
+    if (_focusNode.hasFocus && !_isCompleted && !_isPaused) {
       _autoScrollToCurrentPosition();
+      if (!_keyboardAnimationController.isAnimating) {
+        _keyboardAnimationController.repeat(reverse: true);
+      }
+    } else {
+      _keyboardAnimationController.stop();
     }
   }
 
@@ -102,78 +116,94 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   }
 
   void _onTextChanged() {
-    try {
-      _textChangeDebounceTimer?.cancel();
-      _textChangeDebounceTimer = Timer(const Duration(milliseconds: 50), () {
-        if (_isCompleted || !mounted) return;
+    if (_isPaused || _isCompleted || !mounted) return;
 
-        if (!_isStarted && _targetCode.isNotEmpty) {
-          _startTimer();
+    _textChangeDebounceTimer?.cancel();
+    _textChangeDebounceTimer = Timer(const Duration(milliseconds: 50), () {
+      if (_isCompleted || !mounted) return;
+
+      if (!_isStarted && _targetCode.isNotEmpty) {
+        _startTimer();
+      }
+
+      final typedText = _typingController.text;
+      if (_currentPosition > 0 && typedText.length > _currentPosition + 1) {
+        _typingController.text = typedText.substring(0, _currentPosition + 1);
+        return;
+      }
+
+      _currentPosition = typedText.length.clamp(0, _targetCode.length);
+      _currentCharIndex = _currentPosition;
+
+      if (_currentPosition < _targetCode.length &&
+          typedText.endsWith('\n') &&
+          _targetCode[_currentPosition] != '\n') {
+        _typingController.text = typedText.substring(0, typedText.length - 1);
+        _currentPosition--;
+        return;
+      }
+
+      if (_charStatus.length != _targetCode.length) {
+        _charStatus = List.filled(_targetCode.length, false);
+      }
+
+      int newCorrectCharacters = 0;
+      int newErrors = 0;
+      for (int i = 0; i < typedText.length && i < _targetCode.length; i++) {
+        bool isCorrect = typedText[i] == _targetCode[i];
+        _charStatus[i] = isCorrect;
+        if (isCorrect) {
+          newCorrectCharacters++;
+        } else {
+          newErrors++;
         }
+      }
 
-        final typedText = _typingController.text;
-        if (_currentPosition > 0 && typedText.length > _currentPosition + 1) {
-          _typingController.text = typedText.substring(0, _currentPosition + 1);
-          return;
+      if (newCorrectCharacters != _correctCharacters ||
+          newErrors != _errors ||
+          typedText.length >= _targetCode.length) {
+        setState(() {
+          _correctCharacters = newCorrectCharacters;
+          _errors = newErrors;
+        });
+        _calculateMetrics();
+        _autoScrollToCurrentPosition();
+
+        if (typedText.length >= _targetCode.length && _targetCode.isNotEmpty) {
+          _completePractice();
         }
-
-        _currentPosition = typedText.length.clamp(0, _targetCode.length);
-        _currentCharIndex = _currentPosition;
-
-        if (_currentPosition < _targetCode.length &&
-            typedText.endsWith('\n') &&
-            _targetCode[_currentPosition] != '\n') {
-          _typingController.text = typedText.substring(0, typedText.length - 1);
-          _currentPosition--;
-          return;
-        }
-
-        if (_charStatus.length != _targetCode.length) {
-          _charStatus = List.filled(_targetCode.length, false);
-        }
-
-        int newCorrectCharacters = 0;
-        int newErrors = 0;
-        for (int i = 0; i < typedText.length && i < _targetCode.length; i++) {
-          bool isCorrect = typedText[i] == _targetCode[i];
-          _charStatus[i] = isCorrect;
-          if (isCorrect) {
-            newCorrectCharacters++;
-          } else {
-            newErrors++;
-          }
-        }
-
-        if (newCorrectCharacters != _correctCharacters ||
-            newErrors != _errors ||
-            typedText.length >= _targetCode.length) {
-          setState(() {
-            _correctCharacters = newCorrectCharacters;
-            _errors = newErrors;
-          });
-          _calculateMetrics();
-          _autoScrollToCurrentPosition();
-
-          if (typedText.length >= _targetCode.length && _targetCode.isNotEmpty) {
-            _completePractice();
-          }
-        }
-      });
-    } catch (e, stackTrace) {
-      developer.log('Error in _onTextChanged: $e', error: e, stackTrace: stackTrace);
-    }
+      }
+    });
   }
 
   void _startTimer() {
     setState(() {
       _isStarted = true;
+      _isPaused = false;
       _startTime = DateTime.now().millisecondsSinceEpoch;
     });
     _updateTimer();
   }
 
+  void _pausePractice() {
+    setState(() {
+      _isPaused = true;
+    });
+    _keyboardAnimationController.stop();
+  }
+
+  void _resumePractice() {
+    setState(() {
+      _isPaused = false;
+      _startTime = DateTime.now().millisecondsSinceEpoch - _currentTime;
+    });
+    _focusNode.requestFocus();
+    _keyboardAnimationController.repeat(reverse: true);
+    _updateTimer();
+  }
+
   void _updateTimer() {
-    if (!_isStarted || _isCompleted || !mounted) return;
+    if (!_isStarted || _isCompleted || _isPaused || !mounted) return;
 
     final newTime = DateTime.now().millisecondsSinceEpoch - _startTime;
     if ((newTime - _currentTime).abs() > 100) {
@@ -197,7 +227,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   }
 
   void _autoScrollToCurrentPosition() {
-    if (_isManualScrolling || _isCompleted || _targetCode.isEmpty) return;
+    if (_isManualScrolling || _isCompleted || _isPaused || _targetCode.isEmpty) return;
 
     _scrollDebounceTimer?.cancel();
     _scrollDebounceTimer = Timer(const Duration(milliseconds: 100), () {
@@ -242,13 +272,11 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
       );
 
       final lineHeight = textPainter.preferredLineHeight;
-      final lineNumber = textBeforeCursor.split('\n').length - 1;
-      final targetOffset = caretOffset.dy + (lineNumber * lineHeight * 0.5) - (MediaQuery.of(context).size.height / 4);
+      final targetOffset = caretOffset.dy - (MediaQuery.of(context).size.height / 4);
 
       if (_targetScrollController.hasClients) {
         final maxScroll = _targetScrollController.position.maxScrollExtent;
         final newOffset = targetOffset.clamp(0.0, maxScroll > 0 ? maxScroll : 0.0);
-        developer.log('Target scroll to: $newOffset, caret: $caretOffset, line: $lineNumber', name: 'PracticePage');
         _targetScrollController.animateTo(
           newOffset,
           duration: const Duration(milliseconds: 200),
@@ -259,7 +287,6 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
       if (_typingScrollController.hasClients) {
         final maxScroll = _typingScrollController.position.maxScrollExtent;
         final newOffset = targetOffset.clamp(0.0, maxScroll > 0 ? maxScroll : 0.0);
-        developer.log('Typing scroll to: $newOffset, caret: $caretOffset, line: $lineNumber', name: 'PracticePage');
         _typingScrollController.animateTo(
           newOffset,
           duration: const Duration(milliseconds: 200),
@@ -272,7 +299,9 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   void _completePractice() {
     setState(() {
       _isCompleted = true;
+      _isPaused = false;
     });
+    _keyboardAnimationController.stop();
 
     final session = PracticeSession(
       language: _selectedLanguage,
@@ -434,6 +463,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
   void _resetPractice() {
     setState(() {
       _isStarted = false;
+      _isPaused = false;
       _isCompleted = false;
       _startTime = 0;
       _currentTime = 0;
@@ -541,12 +571,25 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
 
   void _onRawKey(RawKeyEvent event) {
     if (event is RawKeyDownEvent) {
-      if (event.logicalKey == LogicalKeyboardKey.backspace) {
-        return;
+      if (event.logicalKey == LogicalKeyboardKey.backspace && _currentPosition > 0 && !_isPaused && !_isCompleted) {
+        setState(() {
+          _currentPosition--;
+          if (_charStatus[_currentPosition]) {
+            _correctCharacters--;
+          } else {
+            _errors--;
+          }
+          _charStatus[_currentPosition] = false;
+          _typingController.text = _typingController.text.substring(0, _currentPosition);
+          _cachedSpans = []; // Invalidate cache
+        });
+        _calculateMetrics();
+        _autoScrollToCurrentPosition();
+      } else {
+        setState(() {
+          _currentKey = _mapLogicalKeyToChar(event.logicalKey);
+        });
       }
-      setState(() {
-        _currentKey = _mapLogicalKeyToChar(event.logicalKey);
-      });
     } else if (event is RawKeyUpEvent) {
       setState(() {
         _currentKey = null;
@@ -602,7 +645,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
     List<String> nextKeys = [];
     bool needsShift = false;
 
-    if (_currentPosition < _targetCode.length) {
+    if (_currentPosition < _targetCode.length && !_isPaused && !_isCompleted) {
       final nextChar = _targetCode[_currentPosition];
       final mappedKey = _mapCharToKeyboardKey(nextChar);
       nextKeys.add(mappedKey);
@@ -797,13 +840,11 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
     };
 
     final mappedKey = charToKeyMap[char] ?? char.toLowerCase();
-    developer.log('Mapping char: $char to key: $mappedKey', name: 'PracticePage');
     return mappedKey;
   }
 
   void _startPractice() {
     if (_targetCode.isEmpty) {
-      developer.log('Target code is empty, using fallback', name: 'PracticePage');
       setState(() {
         _targetCode = '// Start typing...';
         _totalCharacters = _targetCode.length;
@@ -812,6 +853,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
     }
     setState(() {
       _isStarted = true;
+      _isPaused = false;
       _isCompleted = false;
       _startTime = DateTime.now().millisecondsSinceEpoch;
       _currentTime = 0;
@@ -836,6 +878,7 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
         _typingScrollController.jumpTo(0);
       }
       _focusNode.requestFocus();
+      _keyboardAnimationController.repeat(reverse: true);
       _updateTimer();
     });
   }
@@ -869,6 +912,18 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
+    if (_targetCode.isEmpty && ModalRoute.of(context)?.settings.arguments == null) {
+      return Scaffold(
+        backgroundColor: Colors.orange[50],
+        body: Center(
+          child: Text(
+            'Error: No lesson data provided.',
+            style: TextStyle(color: Colors.red[700], fontSize: 18),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.orange[50],
       appBar: AppBar(
@@ -876,7 +931,10 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
         elevation: 0,
         title: Row(
           children: [
-            Image.asset('assets/logo.png', height: 36),
+            Semantics(
+              label: 'YHA Computer logo',
+              child: Image.asset('assets/logo.png', height: 36),
+            ),
             const SizedBox(width: 10),
             Text(
               'YHA Computer',
@@ -894,231 +952,238 @@ class _PracticePageState extends State<PracticePage> with TickerProviderStateMix
             onPressed: _resetPractice,
             tooltip: 'Reset Practice',
           ),
+          IconButton(
+            icon: Icon(_isPaused ? Icons.play_arrow : Icons.pause),
+            onPressed: _isCompleted ? null : (_isPaused ? _resumePractice : _pausePractice),
+            tooltip: _isPaused ? 'Resume Practice' : 'Pause Practice',
+          ),
         ],
       ),
-      body: _targetCode.isEmpty
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            child: Column(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Lesson $_selectedLesson - $_selectedLanguage',
-                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.orange[800],
-                                  fontSize: 22,
-                                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Lesson $_selectedLesson - $_selectedLanguage',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange[800],
+                            fontSize: 22,
                           ),
-                          Text(
-                            '${_currentPosition}/$_totalCharacters',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      LinearProgressIndicator(
-                        value: _totalCharacters > 0 ? _currentPosition / _totalCharacters : 0,
-                        backgroundColor: Colors.grey[200],
-                        valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  color: Colors.orange[100],
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _buildMetric('Time', _formatTime(_currentTime), Icons.access_time),
-                      _buildMetric('WPM', _wpm.toStringAsFixed(1), Icons.speed),
-                      _buildMetric('Accuracy', '${_accuracy.toStringAsFixed(1)}%', Icons.track_changes),
-                      _buildMetric('Errors', '$_errors', Icons.error_outline),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.orange.withOpacity(0.08),
-                          blurRadius: 12,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
                     ),
-                    child: Row(
-                      children: [
-                        Flexible(
-                          flex: 1,
-                          fit: FlexFit.tight,
-                          child: Container(
+                    Text(
+                      '${_currentPosition}/$_totalCharacters',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                LinearProgressIndicator(
+                  value: _totalCharacters > 0 ? _currentPosition / _totalCharacters : 0,
+                  backgroundColor: Colors.grey[200],
+                  valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            color: Colors.orange[100],
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildMetric('Time', _formatTime(_currentTime), Icons.access_time),
+                _buildMetric('WPM', _wpm.toStringAsFixed(1), Icons.speed),
+                _buildMetric('Accuracy', '${_accuracy.toStringAsFixed(1)}%', Icons.track_changes),
+                _buildMetric('Errors', '$_errors', Icons.error_outline),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Container(
+              margin: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.orange.withOpacity(0.08),
+                    blurRadius: 12,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Flexible(
+                    flex: 1,
+                    fit: FlexFit.tight,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          right: BorderSide(
+                            color: Colors.orange[100]!,
+                            width: 1,
+                          ),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              border: Border(
-                                right: BorderSide(
-                                  color: Colors.orange[100]!,
-                                  width: 1,
-                                ),
+                              color: Colors.orange[50],
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(18),
                               ),
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            child: Row(
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.orange[50],
-                                    borderRadius: const BorderRadius.only(
-                                      topLeft: Radius.circular(18),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.code, size: 18, color: Colors.orange[800]),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'Target Code',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.orange[800],
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      const Spacer(),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                        decoration: BoxDecoration(
-                                          color: Colors.blue[100],
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                        child: Text(
-                                          '$_currentPosition/$_totalCharacters',
-                                          style: TextStyle(
-                                            color: Colors.blue[700],
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
+                                Icon(Icons.code, size: 18, color: Colors.orange[800]),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Target Code',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.orange[800],
+                                    fontSize: 16,
                                   ),
                                 ),
-                                Expanded(
-                                  child: Scrollbar(
-                                    controller: _targetScrollController,
-                                    thumbVisibility: true,
-                                    child: SingleChildScrollView(
-                                      controller: _targetScrollController,
-                                      padding: const EdgeInsets.all(8),
-                                      child: SelectableText.rich(
-                                        TextSpan(
-                                          style: const TextStyle(
-                                            fontFamily: 'RobotoMono',
-                                            fontSize: 16,
-                                            height: 1.5,
-                                            color: Colors.black87,
-                                          ),
-                                          children: _buildColoredText(),
-                                        ),
-                                      ),
+                                const Spacer(),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue[100],
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    '$_currentPosition/$_totalCharacters',
+                                    style: TextStyle(
+                                      color: Colors.blue[700],
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
                                     ),
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                        ),
-                        Flexible(
-                          flex: 1,
-                          fit: FlexFit.tight,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
+                          Expanded(
+                            child: Scrollbar(
+                              controller: _targetScrollController,
+                              thumbVisibility: true,
+                              child: SingleChildScrollView(
+                                controller: _targetScrollController,
                                 padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.orange[50],
-                                  borderRadius: const BorderRadius.only(
-                                    topRight: Radius.circular(18),
+                                child: SelectableText.rich(
+                                  TextSpan(
+                                    style: const TextStyle(
+                                      fontFamily: 'RobotoMono',
+                                      fontSize: 16,
+                                      height: 1.5,
+                                      color: Colors.black87,
+                                    ),
+                                    children: _buildColoredText(),
                                   ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.edit, size: 18, color: Colors.orange[800]),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'Your Code',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.orange[800],
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                                    const Spacer(),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                      decoration: BoxDecoration(
-                                        color: Theme.of(context).colorScheme.primary,
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Text(
-                                        'Position: $_currentPosition',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                  semanticsLabel: 'Target code to type, showing correct and incorrect characters',
                                 ),
                               ),
-                              Expanded(
-                                child: Scrollbar(
-                                  controller: _typingScrollController,
-                                  thumbVisibility: true,
-                                  child: SingleChildScrollView(
-                                    controller: _typingScrollController,
-                                    padding: const EdgeInsets.all(8),
-                                    child: TextField(
-                                      controller: _typingController,
-                                      focusNode: _focusNode,
-                                      maxLines: null,
-                                      enableInteractiveSelection: false,
-                                      style: const TextStyle(
-                                        fontFamily: 'RobotoMono',
-                                        fontSize: 16,
-                                        height: 1.5,
-                                      ),
-                                      decoration: const InputDecoration(
-                                        border: InputBorder.none,
-                                        hintText: 'Start typing here...',
-                                        hintStyle: TextStyle(color: Colors.grey),
-                                      ),
-                                    ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Flexible(
+                    flex: 1,
+                    fit: FlexFit.tight,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.orange[50],
+                            borderRadius: const BorderRadius.only(
+                              topRight: Radius.circular(18),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit, size: 18, color: Colors.orange[800]),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Your Code',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.orange[800],
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const Spacer(),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  'Position: $_currentPosition',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
                               ),
                             ],
                           ),
                         ),
+                        Expanded(
+                          child: Scrollbar(
+                            controller: _typingScrollController,
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              controller: _typingScrollController,
+                              padding: const EdgeInsets.all(8),
+                              child: Semantics(
+                                label: 'Typing area for code practice',
+                                child: TextField(
+                                  controller: _typingController,
+                                  focusNode: _focusNode,
+                                  maxLines: null,
+                                  enableInteractiveSelection: false,
+                                  style: const TextStyle(
+                                    fontFamily: 'RobotoMono',
+                                    fontSize: 16,
+                                    height: 1.5,
+                                  ),
+                                  decoration: const InputDecoration(
+                                    border: InputBorder.none,
+                                    hintText: 'Start typing here...',
+                                    hintStyle: TextStyle(color: Colors.grey),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                ),
-                _buildVirtualKeyboard(),
-              ],
+                ],
+              ),
             ),
+          ),
+          _buildVirtualKeyboard(),
+        ],
+      ),
     );
   }
 }
